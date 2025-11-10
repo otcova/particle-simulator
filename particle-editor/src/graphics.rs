@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
     backend::{Packet, Particle},
     wgpu_utils::WgpuContext,
@@ -7,8 +9,9 @@ use wgpu::{BindGroupLayoutEntry, hal::Rect, util::DeviceExt};
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Zeroable, bytemuck::NoUninit)]
 pub struct Uniform {
-    pub rtx: bool,
-    padding: [u8; 3],
+    pub rtx: u32,
+    time: f32,
+    radius: f32,
 }
 
 pub struct Graphics {
@@ -19,6 +22,8 @@ pub struct Graphics {
     particles_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
     pub uniform: Uniform,
+
+    start_instant: Instant,
 }
 
 impl Graphics {
@@ -76,7 +81,7 @@ impl Graphics {
                         ],
                     }],
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[("radius", 0.05)],
+                        constants: &[],
                         zero_initialize_workgroup_memory: false,
                     },
                 },
@@ -97,7 +102,7 @@ impl Graphics {
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[("radius", 0.05)],
+                        constants: &[],
                         zero_initialize_workgroup_memory: false,
                     },
                 }),
@@ -144,7 +149,8 @@ impl Graphics {
         });
 
         let uniform = Uniform {
-            rtx: false,
+            rtx: 1,
+            radius: 0.1,
             ..Default::default()
         };
 
@@ -156,6 +162,8 @@ impl Graphics {
             particles_buffer,
             uniform_buffer,
             uniform,
+
+            start_instant: Instant::now(),
         }
     }
 
@@ -166,9 +174,8 @@ impl Graphics {
         frame: &Packet,
         mut rect: Rect<u32>,
     ) {
-        self.update(gpu, frame);
-        gpu.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&self.uniform));
+        self.update_particles(gpu, frame);
+        self.update_uniform(gpu);
 
         let ratio = 1.; // w / h
         if rect.w > rect.h {
@@ -221,7 +228,14 @@ impl Graphics {
         render_pass.draw(0..3, 0..frame.particles.len() as u32);
     }
 
-    fn update(&mut self, gpu: &WgpuContext, frame: &Packet) {
+    fn update_uniform(&mut self, gpu: &WgpuContext) {
+        self.uniform.time = self.start_instant.elapsed().as_secs_f32();
+
+        let bytes = bytemuck::bytes_of(&self.uniform);
+        gpu.queue.write_buffer(&self.uniform_buffer, 0, bytes);
+    }
+
+    fn update_particles(&mut self, gpu: &WgpuContext, frame: &Packet) {
         let data = bytemuck::cast_slice(&frame.particles);
 
         if data.is_empty() {

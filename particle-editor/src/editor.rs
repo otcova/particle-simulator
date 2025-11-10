@@ -277,11 +277,24 @@ impl Editor {
 
         self.ui_section(ui, "Render", |editor, ui| {
             ui.horizontal(|ui| {
-                ui.label("Background Color");
+                ui.label("Background Color: ");
                 ui.color_edit_button_srgb(&mut editor.graphics.background_color);
             });
 
-            ui.checkbox(&mut editor.graphics.uniform.rtx, "RTX");
+            ui.horizontal(|ui| {
+                let rtx_names = ["Off", "Ultra", "RGB"];
+                let rtx = &mut editor.graphics.uniform.rtx;
+                let rtx_idx = (*rtx as usize).min(rtx_names.len() - 1);
+
+                ui.label("RTX: ");
+                egui::ComboBox::from_id_salt("RTX: ")
+                    .selected_text(rtx_names[rtx_idx])
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(rtx, 0, rtx_names[0]);
+                        ui.selectable_value(rtx, 1, rtx_names[1]);
+                        ui.selectable_value(rtx, 2, rtx_names[2]);
+                    });
+            });
         });
     }
 }
