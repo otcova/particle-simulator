@@ -12,18 +12,20 @@ pub struct Packet {
 impl Packet {
     pub fn square(size: u32) -> Packet {
         let mut particles = Vec::new();
-        particles.reserve_exact((size * size) as usize);
+        if size > 0 {
+            particles.reserve_exact((size * size) as usize);
 
-        for idx_x in 0..size {
-            for idx_y in 0..size {
-                let x = idx_x as f32 / size as f32;
-                let y = idx_y as f32 / size as f32;
-                particles.push(Particle {
-                    pos_x: (x + 0.5) * 0.5,
-                    pos_y: (y + 0.5) * 0.5,
-                    vel_x: 0.,
-                    vel_y: 0.,
-                })
+            for idx_x in 0..size {
+                for idx_y in 0..size {
+                    let x = idx_x as f32 / (size - 1) as f32;
+                    let y = idx_y as f32 / (size - 1) as f32;
+                    particles.push(Particle {
+                        pos_x: (x + 0.5) * 0.5,
+                        pos_y: (y + 0.5) * 0.5,
+                        vel_x: 0.,
+                        vel_y: 0.,
+                    })
+                }
             }
         }
         Packet {
@@ -174,6 +176,7 @@ struct PacketHeader {
     time: f32,
     particles_count: u32,
 }
+
 impl PacketHeader {
     // Each header must start with this SIGNATURE.
     const SIGNATURE: [u8; 8] = 0xec12c4acbde9bc36_u64.to_le_bytes();
