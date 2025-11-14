@@ -28,7 +28,14 @@ pub struct Editor {
     box_size: u32,
     floating_windows: bool,
     close_window: bool,
+    // autoplay related
+    auto_play: bool,
+    play_speed: f32,
+    auto_play_counter: f32,
 }
+
+unsafe impl Send for Editor {}
+unsafe impl Sync for Editor {}
 
 impl Editor {
     pub async fn new(window: Arc<Window>) -> Editor {
@@ -46,6 +53,10 @@ impl Editor {
             box_size: 5,
             floating_windows: false,
             close_window: false,
+            // Simulation Play related
+            auto_play: false,
+            play_speed: 1.,
+            auto_play_counter: 0.,
         }
     }
 
@@ -53,6 +64,16 @@ impl Editor {
         self.gpu.window.request_redraw();
 
         self.simulation.update(&mut self.backend);
+
+        // ultra cutre but kinda works i guess
+        if self.auto_play && self.simulation.timeline_frames_count() > 0 {
+            if self.auto_play_counter > 60. {
+                self.frame_index = (1 + self.frame_index) % self.simulation.timeline_frames_count();
+                self.auto_play_counter = 0.;
+            } else {
+                self.auto_play_counter += self.play_speed;
+            }
+        }
 
         self.gpu.start_frame();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -237,7 +258,11 @@ impl Editor {
         });
 
         self.ui_section(ui, "Simulation", |editor, ui| {
-            ui.button("Play").clicked();
+            if ui.button(if editor.auto_play { "Stop" } else { "Play" }).clicked() {
+                editor.auto_play_counter = 0.;
+                editor.auto_play = !editor.auto_play;
+            }
+
             if ui.button("Clear Timeline").clicked() {
                 editor.simulation.clear();
             }
@@ -250,13 +275,21 @@ impl Editor {
                 };
 
                 ui.label("Timeline");
+                let st_range = frames_count.min(1);
                 ui.add(
-                    egui::Slider::new(&mut cursor, 1..=frames_count)
+                    egui::Slider::new(&mut cursor, st_range..=frames_count)
                         .suffix(format!("/{}", frames_count)),
                 );
 
                 editor.frame_index = cursor.saturating_sub(1);
             });
+
+            if ui.button(editor.play_speed.to_string() + "x").clicked() {
+                editor.play_speed *= 2.;
+                if editor.play_speed > 4. {
+                    editor.play_speed = 0.25;
+                }
+            }
         });
 
         self.ui_section(ui, "Editor", |editor, ui| {
