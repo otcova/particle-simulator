@@ -17,8 +17,17 @@ impl Packet {
 
             for idx_x in 0..size {
                 for idx_y in 0..size {
-                    let x = idx_x as f32 / (size - 1) as f32;
-                    let y = idx_y as f32 / (size - 1) as f32;
+                    let x: f32;
+                    let y: f32;
+
+                    if size > 1 {
+                        x = idx_x as f32 / (size - 1) as f32;
+                        y = idx_y as f32 / (size - 1) as f32;
+                    } else {
+                        x = 0.5;
+                        y = 0.5;
+                    }
+
                     particles.push(Particle {
                         pos_x: (x + 0.5) * 0.5,
                         pos_y: (y + 0.5) * 0.5,

@@ -1,5 +1,9 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
+use egui::Color32;
 use wgpu::hal::Rect;
 use winit::{
     dpi::PhysicalSize,
@@ -28,20 +32,19 @@ pub struct Editor {
     box_size: u32,
     floating_windows: bool,
     close_window: bool,
-    // autoplay related
-    auto_play: bool,
-    play_speed: f32,
-    auto_play_counter: f32,
-}
 
-unsafe impl Send for Editor {}
-unsafe impl Sync for Editor {}
+    // play related
+    auto_play: bool,
+    loop_play: bool,
+    play_speed: f32,
+    prev_instant: Instant,
+}
 
 impl Editor {
     pub async fn new(window: Arc<Window>) -> Editor {
         let gpu = WgpuContext::new(window).await;
 
-        Editor {
+        let editor = Editor {
             egui: EguiContext::new(&gpu, None, 1),
             graphics: Graphics::new(&gpu),
             simulation: Simulation::new(),
@@ -53,11 +56,15 @@ impl Editor {
             box_size: 5,
             floating_windows: false,
             close_window: false,
-            // Simulation Play related
+
+            // play related
             auto_play: false,
+            loop_play: true,
             play_speed: 1.,
-            auto_play_counter: 0.,
-        }
+            prev_instant: Instant::now(),
+        };
+        egui_extras::install_image_loaders(editor.egui.context());
+        editor
     }
 
     pub fn render(&mut self) {
@@ -65,13 +72,20 @@ impl Editor {
 
         self.simulation.update(&mut self.backend);
 
-        // ultra cutre but kinda works i guess
-        if self.auto_play && self.simulation.timeline_frames_count() > 0 {
-            if self.auto_play_counter > 60. {
-                self.frame_index = (1 + self.frame_index) % self.simulation.timeline_frames_count();
-                self.auto_play_counter = 0.;
-            } else {
-                self.auto_play_counter += self.play_speed;
+        let cur_n_frames = self.simulation.timeline_frames_count();
+        if self.auto_play && cur_n_frames > 0 {
+            if self.prev_instant.elapsed() > Duration::from_millis((1000. / self.play_speed) as u64)
+            {
+                self.prev_instant = Instant::now();
+
+                self.frame_index += 1;
+                if self.frame_index >= cur_n_frames {
+                    if self.loop_play {
+                        self.frame_index = 0;
+                    } else {
+                        self.frame_index = cur_n_frames - 1;
+                    }
+                }
             }
         }
 
@@ -107,6 +121,7 @@ impl Editor {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
+                    self.playback_panel(ui);
                 });
         } else {
             egui::SidePanel::left("left")
@@ -122,6 +137,19 @@ impl Editor {
                             })
                             .show(ui, |ui| self.left_panel(ui))
                     });
+                });
+
+            egui::TopBottomPanel::bottom("bottom")
+                .resizable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 5,
+                            right: 5,
+                            top: 5,
+                            bottom: 5,
+                        })
+                        .show(ui, |ui| self.playback_panel(ui));
                 });
         }
 
@@ -167,6 +195,12 @@ impl Editor {
         let f11 = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F11);
         if input.consume_shortcut(&f11) {
             self.toggle_fullscreen();
+        }
+
+        let space = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
+        if input.consume_shortcut(&space) {
+            self.auto_play = !self.auto_play;
+            self.prev_instant = Instant::now();
         }
     }
 
@@ -258,15 +292,34 @@ impl Editor {
         });
 
         self.ui_section(ui, "Simulation", |editor, ui| {
-            if ui.button(if editor.auto_play { "Stop" } else { "Play" }).clicked() {
-                editor.auto_play_counter = 0.;
-                editor.auto_play = !editor.auto_play;
-            }
+            /*ui.horizontal(|ui| {
+                if ui
+                    .button(if editor.auto_play { "Stop" } else { "Play" })
+                    .clicked()
+                {
+                    editor.auto_play = !editor.auto_play;
+                    editor.prev_instant = Instant::now();
+                }
+
+                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::image(
+                            egui::Image::new(egui::include_image!(
+                                "../src/icons/media-playlist-repeat.png"
+                            ))
+                            .tint(Color32::from_gray(if editor.loop_play { 255 } else { 0 })),
+                        ))
+                        .clicked()
+                    {
+                        editor.loop_play = !editor.loop_play;
+                    };
+                });
+            });*/
 
             if ui.button("Clear Timeline").clicked() {
                 editor.simulation.clear();
             }
-            ui.horizontal(|ui| {
+            /*ui.horizontal(|ui| {
                 let frames_count = editor.simulation.timeline_frames_count();
                 let mut cursor = if editor.frame_index == 0 {
                     0
@@ -282,14 +335,7 @@ impl Editor {
                 );
 
                 editor.frame_index = cursor.saturating_sub(1);
-            });
-
-            if ui.button(editor.play_speed.to_string() + "x").clicked() {
-                editor.play_speed *= 2.;
-                if editor.play_speed > 4. {
-                    editor.play_speed = 0.25;
-                }
-            }
+            });*/
         });
 
         self.ui_section(ui, "Editor", |editor, ui| {
@@ -302,6 +348,7 @@ impl Editor {
                 let can_send = editor.backend.backend_in_status().state == BackendState::Connected;
                 ui.add_enabled_ui(can_send, |ui| {
                     if ui.button("Send To Backend").clicked() {
+                        println!("{}", editor.box_size);
                         editor.backend.store(&Packet::square(editor.box_size));
                     }
                 });
@@ -329,5 +376,120 @@ impl Editor {
                     });
             });
         });
+    }
+
+    // can be optimized to only recalculate widgets width when necessary
+    fn playback_panel(&mut self, ui: &mut egui::Ui) {
+        let mut content = |ui: &mut egui::Ui| -> () {
+            ui.vertical(|ui| {
+                // timeline bar
+
+                ui.horizontal(|ui| {
+                    let frames_count = self.simulation.timeline_frames_count();
+                    let mut cursor = if self.frame_index == 0 {
+                        0
+                    } else {
+                        frames_count.min(self.frame_index + 1)
+                    };
+
+                    ui.style_mut().spacing.slider_width = 0.;
+                    let resp = ui.add_visible(
+                        false,
+                        egui::Slider::new(&mut cursor, frames_count.min(1)..=frames_count)
+                            .suffix(format!("/{}", frames_count))
+                            .trailing_fill(true),
+                    );
+
+                    ui.add_space(-resp.rect.width() - 8.);
+                    ui.style_mut().spacing.slider_width =
+                        (0 as f32).max(ui.available_width() - resp.rect.width());
+
+                    ui.add(
+                        egui::Slider::new(&mut cursor, frames_count.min(1)..=frames_count)
+                            .suffix(format!("/{}", frames_count))
+                            .trailing_fill(true),
+                    );
+
+                    self.frame_index = cursor.saturating_sub(1);
+                });
+
+                // play buttons
+                ui.horizontal(|ui| {
+                    let tot_space = ui.available_width();
+                    let resp =
+                        ui.add_visible(false, egui::Button::new(self.play_speed.to_string() + "x"));
+
+                    // 22.96875: buttons width (pre-measured/observed)
+                    ui.add_space(
+                        tot_space / 2.
+                            - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
+                            + (22.96875 / 2. + 8. / 2.) // to have the play button on center
+                            - (2. * resp.rect.width() + 2. * 8.), // to make the speed button/s not affect others positions
+                    );
+
+                    if ui.button(self.play_speed.to_string() + "x").clicked() {
+                        const MAX_SPEED: f32 = 8.;
+                        const MIN_SPEED: f32 = 0.5;
+
+                        self.play_speed *= 2.;
+                        if self.play_speed > MAX_SPEED {
+                            self.play_speed = MIN_SPEED;
+                        }
+                    }
+                    if ui
+                        .add(egui::Button::image(egui::Image::new(egui::include_image!(
+                            "../src/icons/media-seek-backward.png"
+                        ))))
+                        .clicked()
+                    {
+                        self.frame_index = self.frame_index.saturating_sub(1);
+                    }
+
+                    if ui
+                        .add(egui::Button::image(egui::Image::new(if self.auto_play {
+                            egui::include_image!("../src/icons/media-playback-pause.png")
+                        } else {
+                            egui::include_image!("../src/icons/media-playback-start.png")
+                        })))
+                        .clicked()
+                    {
+                        self.auto_play = !self.auto_play;
+                        self.prev_instant = Instant::now();
+                    }
+
+                    if ui
+                        .add(egui::Button::image(egui::Image::new(egui::include_image!(
+                            "../src/icons/media-seek-forward.png"
+                        ))))
+                        .clicked()
+                    {
+                        if self.simulation.timeline_frames_count() > self.frame_index + 1 {
+                            self.frame_index += 1;
+                        } else {
+                            self.frame_index = 0;
+                        }
+                    }
+
+                    if ui
+                        .add(egui::Button::image(
+                            egui::Image::new(egui::include_image!(
+                                "../src/icons/media-playlist-repeat.png"
+                            ))
+                            .tint(Color32::from_gray(if self.loop_play { 255 } else { 0 })),
+                        ))
+                        .clicked()
+                    {
+                        self.loop_play = !self.loop_play;
+                    };
+                });
+            });
+        };
+
+        if self.floating_windows {
+            let ctx = &self.egui.context().clone();
+            egui::Window::new("Playback").show(ctx, content);
+        } else {
+            content(ui);
+        }
     }
 }
