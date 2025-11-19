@@ -14,3 +14,6 @@ egui = "0.33"
 egui-wgpu = "0.33"
 egui-winit = "0.33"
 particle_io = { path = "../particle_io" }
+egui_extras = { version = "*", features = ["all_loaders"] }
+image = { version = "0.25", features = ["png"] }
+

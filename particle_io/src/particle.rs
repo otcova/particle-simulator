@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use bytemuck::{
-    Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
+    bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes, Pod, Zeroable,
 };
 
 #[repr(C)]
@@ -219,9 +219,15 @@ impl Frame {
                 let vx = (a ^ b) as f32 / u32::MAX as f32;
                 let vy = (c ^ d) as f32 / u32::MAX as f32;
 
-                // coordinates from 0 to 1 (inclusive)
-                let x = idx_x as f32 / (size - 1) as f32;
-                let y = idx_y as f32 / (size - 1) as f32;
+                let mut x = 0.5;
+                let mut y = 0.5;
+
+                if size > 1 {
+                    // Coordinates from 0 to 1 (inclusive)
+                    x = idx_x as f32 / (size - 1) as f32;
+                    y = idx_y as f32 / (size - 1) as f32;
+                }
+
                 self.push(Particle {
                     x: (x + 0.5) * 0.5,
                     y: (y + 0.5) * 0.5,
