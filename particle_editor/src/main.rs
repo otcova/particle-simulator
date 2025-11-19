@@ -4,7 +4,6 @@ use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    platform::x11::EventLoopBuilderExtX11,
     window::{WindowAttributes, WindowId},
 };
 
@@ -25,7 +24,6 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attributes = WindowAttributes::default();
-        // attributes.inner_size = Some(LogicalSize::new(1024, 768).into());
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
 
         let editor = pollster::block_on(Editor::new(window));
@@ -53,15 +51,7 @@ impl ApplicationHandler for App {
 fn main() {
     env_logger::init();
 
-    let event_loop = if cfg!(target_os = "linux") {
-        // While this issue is unsolved: https://github.com/rust-windowing/winit/issues/4267
-        // we deafult to x11.
-        // EventLoop::builder().with_x11().build().unwrap()
-        EventLoop::builder().with_x11().build()
-    } else {
-        EventLoop::new()
-    }
-    .expect("Unable to start event loop");
+    let event_loop = EventLoop::new().expect("Unable to start event loop");
 
     event_loop.set_control_flow(ControlFlow::Poll);
 

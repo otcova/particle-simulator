@@ -1,20 +1,23 @@
-use crate::backend::{Backend, Packet};
+use crate::backend::Backend;
+use particle_io::Frame;
 
 pub struct Simulation {
-    timeline: Vec<Packet>,
-    blank: Packet, // Returned when timeline is empty
+    timeline: Vec<Frame>,
+    blank: Frame, // Returned when timeline is empty
 }
 
 impl Simulation {
     pub fn new() -> Simulation {
         Simulation {
             timeline: Vec::new(),
-            blank: Packet::default(),
+            blank: Frame::new(),
         }
     }
 
     pub fn update(&mut self, backend: &mut Backend) {
-        backend.load(&mut self.timeline);
+        while let Some(frame) = backend.read() {
+            self.timeline.push(frame);
+        }
     }
 
     pub fn clear(&mut self) {
@@ -25,7 +28,7 @@ impl Simulation {
         self.timeline.len() as u32
     }
 
-    pub fn frame(&mut self, idx: u32) -> &Packet {
+    pub fn frame(&mut self, idx: u32) -> &Frame {
         if self.timeline.is_empty() {
             return &self.blank;
         }

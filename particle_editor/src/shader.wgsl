@@ -3,6 +3,7 @@ const radius_margin = 0.3;
 struct Particle {
     @location(0) pos: vec2f,
     @location(1) vel: vec2f,
+    @location(2) ty: u32,
 }
 
 struct VertexOutput {
@@ -27,6 +28,13 @@ fn vertex_shader(
     @builtin(instance_index) instance_index: u32,
     particle: Particle,
 ) -> VertexOutput {
+    var out: VertexOutput;
+
+    if particle.ty == 0 {
+        out.position = vec4f(0., 0., 1., 0.);
+        return out;
+    }
+
     // The incenter radius or equilateral triangle is sqrt(3)/6
     let edge_len = uniform_data.radius * ((1. + radius_margin) * 6. / sqrt(3.));
     let vertex_pos = array<vec2f, 3>(
@@ -39,7 +47,6 @@ fn vertex_shader(
     let tex_coord = vertex_pos[vertex_index];
     let relative_speed = 0.3;
 
-    var out: VertexOutput;
     let z = 0.; // select(0., -1., particle_is_nan(particle));
     out.position = vec4f((pos * 2. - 1.) + tex_coord, z, 1.);
     out.color = mix(vec3f(0.0, 0.2, 1.), vec3f(1., 0.2, 0.0), relative_speed);

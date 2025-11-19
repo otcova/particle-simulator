@@ -1,0 +1,14 @@
+[package]
+name = "particle_io_c"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "particle_io_c"
+crate-type = ["staticlib"]
+
+[dependencies]
+particle_io = { path = ".." }
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }

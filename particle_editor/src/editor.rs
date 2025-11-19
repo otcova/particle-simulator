@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use particle_io::Frame;
 use wgpu::hal::Rect;
 use winit::{
     dpi::PhysicalSize,
@@ -9,10 +10,7 @@ use winit::{
 };
 
 use crate::{
-    backend::{Backend, BackendState, Packet},
-    egui_utils::EguiContext,
-    graphics::Graphics,
-    simulation::Simulation,
+    backend::Backend, egui_utils::EguiContext, graphics::Graphics, simulation::Simulation,
     wgpu_utils::WgpuContext,
 };
 
@@ -228,15 +226,18 @@ impl Editor {
         });
 
         self.ui_section(ui, "Backend", |editor, ui| {
-            let out_state = editor.backend.backend_out_status().state;
-            let in_state = editor.backend.backend_in_status().state;
-
-            ui.collapsing(format!("Backend Output: {:?}", out_state), |ui| {
-                ui.label(&editor.backend.backend_out_status().details);
-            });
-            ui.collapsing(format!("Backend Input: {:?}", in_state), |ui| {
-                ui.label(&editor.backend.backend_in_status().details);
-            });
+            ui.collapsing(
+                format!("Backend Output: {:?}", editor.backend.reader_state()),
+                |ui| {
+                    ui.label(&editor.backend.reader_details);
+                },
+            );
+            ui.collapsing(
+                format!("Backend Input: {:?}", editor.backend.writer_state()),
+                |ui| {
+                    ui.label(&editor.backend.writer_details);
+                },
+            );
             ui.add_space(5.);
 
             if ui.button("Connect by files").clicked() {
@@ -249,7 +250,7 @@ impl Editor {
                 }
             });
 
-            if out_state == BackendState::Connected || in_state == BackendState::Connected {
+            if editor.backend.reader_connected() || editor.backend.writer_connected() {
                 let button = ui.button("Disconnect");
                 if button.clicked() {
                     editor.backend.close_connection();
@@ -258,7 +259,10 @@ impl Editor {
         });
 
         self.ui_section(ui, "Simulation", |editor, ui| {
-            if ui.button(if editor.auto_play { "Stop" } else { "Play" }).clicked() {
+            if ui
+                .button(if editor.auto_play { "Stop" } else { "Play" })
+                .clicked()
+            {
                 editor.auto_play_counter = 0.;
                 editor.auto_play = !editor.auto_play;
             }
@@ -299,10 +303,11 @@ impl Editor {
                     ui.add(egui::Slider::new(&mut editor.box_size, 0..=20));
                 });
 
-                let can_send = editor.backend.backend_in_status().state == BackendState::Connected;
-                ui.add_enabled_ui(can_send, |ui| {
+                ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
                     if ui.button("Send To Backend").clicked() {
-                        editor.backend.store(&Packet::square(editor.box_size));
+                        let mut frame = Frame::new();
+                        frame.push_square(editor.box_size);
+                        editor.backend.write(&frame);
                     }
                 });
             });

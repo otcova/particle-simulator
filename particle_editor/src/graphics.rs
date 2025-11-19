@@ -1,9 +1,7 @@
 use std::time::Instant;
 
-use crate::{
-    backend::{Packet, Particle},
-    wgpu_utils::WgpuContext,
-};
+use crate::wgpu_utils::WgpuContext;
+use particle_io::{Frame, Particle};
 use wgpu::{BindGroupLayoutEntry, hal::Rect, util::DeviceExt};
 
 #[repr(C)]
@@ -75,8 +73,13 @@ impl Graphics {
                             },
                             wgpu::VertexAttribute {
                                 shader_location: 1,
-                                offset: 32 * 2 / 8,
+                                offset: size_of::<[f32; 2]>() as wgpu::BufferAddress,
                                 format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                shader_location: 2,
+                                offset: size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                                format: wgpu::VertexFormat::Uint32,
                             },
                         ],
                     }],
@@ -150,7 +153,7 @@ impl Graphics {
 
         let uniform = Uniform {
             rtx: 1,
-            radius: 0.1,
+            radius: 0.05,
             ..Default::default()
         };
 
@@ -171,7 +174,7 @@ impl Graphics {
         &mut self,
         gpu: &WgpuContext,
         encoder: &mut wgpu::CommandEncoder,
-        frame: &Packet,
+        frame: &Frame,
         mut rect: Rect<u32>,
     ) {
         self.update_particles(gpu, frame);
@@ -209,7 +212,7 @@ impl Graphics {
             occlusion_query_set: None,
         });
 
-        if frame.particles.is_empty() {
+        if frame.particles().is_empty() {
             return;
         }
 
@@ -225,7 +228,7 @@ impl Graphics {
         render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
         render_pass.set_vertex_buffer(0, self.particles_buffer.slice(..));
         render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..frame.particles.len() as u32);
+        render_pass.draw(0..3, 0..frame.particles().len() as u32);
     }
 
     fn update_uniform(&mut self, gpu: &WgpuContext) {
@@ -235,8 +238,8 @@ impl Graphics {
         gpu.queue.write_buffer(&self.uniform_buffer, 0, bytes);
     }
 
-    fn update_particles(&mut self, gpu: &WgpuContext, frame: &Packet) {
-        let data = bytemuck::cast_slice(&frame.particles);
+    fn update_particles(&mut self, gpu: &WgpuContext, frame: &Frame) {
+        let data = bytemuck::cast_slice(frame.particles());
 
         if data.is_empty() {
             return;

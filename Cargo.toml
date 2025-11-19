@@ -1,0 +1,8 @@
+[workspace]
+members = ["particle_editor", "particle_io", "particle_io/c_api"]
+resolver = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
+opt-level = "s"

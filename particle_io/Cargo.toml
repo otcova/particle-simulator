@@ -1,0 +1,8 @@
+[package]
+name = "particle_io"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+
+[dependencies]
+bytemuck = { version = "1.24", features = ["derive"] }

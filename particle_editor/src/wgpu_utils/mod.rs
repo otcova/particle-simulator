@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use wgpu::rwh::{HasWindowHandle, RawWindowHandle};
 use winit::{dpi::PhysicalSize, window::Window};
 
 pub struct WgpuContext {
@@ -17,10 +18,30 @@ pub struct WgpuContext {
 impl WgpuContext {
     pub async fn new(window: Arc<Window>) -> WgpuContext {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance.create_surface(window.clone()).unwrap();
+
         let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                compatible_surface: Some(&surface),
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
             .await
             .unwrap();
+        log::info!(
+            "Created a {} window with {:?} {:?}",
+            match window.window_handle().map(|h| h.as_raw()) {
+                Ok(RawWindowHandle::Wayland(_)) => "Wayland",
+                Ok(RawWindowHandle::Xlib(_)) => "X11 (Xlib)",
+                Ok(RawWindowHandle::Xcb(_)) => "X11 (XCB)",
+                Ok(RawWindowHandle::Win32(_)) => "Win32",
+                Ok(raw) => &format!("{:?}", raw),
+                Err(error) => &error.to_string(),
+            },
+            adapter.get_info().backend,
+            adapter.get_info().device_type,
+        );
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
@@ -28,10 +49,14 @@ impl WgpuContext {
 
         let surface_size = window.inner_size();
 
-        let surface = instance.create_surface(window.clone()).unwrap();
         let cap = surface.get_capabilities(&adapter);
         //let surface_format = cap.formats[0].add_srgb_suffix();
-        let surface_format = cap.formats[0].remove_srgb_suffix();
+        let surface_format = cap
+            .formats
+            .first()
+            .expect("Unable to create a surface")
+            .remove_srgb_suffix();
+        // add_srgb_suffix();
 
         Self::configure_surface(&device, &surface, surface_format, surface_size);
 
@@ -61,8 +86,8 @@ impl WgpuContext {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             width: size.width,
             height: size.height,
-            desired_maximum_frame_latency: 2,
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            desired_maximum_frame_latency: 1,
+            present_mode: wgpu::PresentMode::AutoVsync,
         };
         surface.configure(device, &surface_config);
     }
