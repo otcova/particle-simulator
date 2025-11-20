@@ -2,6 +2,9 @@
 members = ["particle_editor", "particle_io", "particle_io/c_api"]
 resolver = "3"
 
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 strip = true
 lto = "thin"

@@ -5,9 +5,13 @@
 static Writer writer;
 static Reader reader;
 
-static void frontend_init() {
+static void frontend_init_files() {
     reader_open_file(&reader, "../simulation/backend_in.bin");
     writer_open_file(&writer, "../simulation/backend_out.bin");
+}
+
+static void frontend_init_tcp() {
+    new_tcp_client(&reader, &writer, "0.0.0.0:53123");
 }
 
 static void frontend_destroy() {

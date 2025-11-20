@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use wgpu::rwh::{HasWindowHandle, RawWindowHandle};
 use winit::{dpi::PhysicalSize, window::Window};
@@ -31,12 +31,12 @@ impl WgpuContext {
         log::info!(
             "Created a {} window with {:?} {:?}",
             match window.window_handle().map(|h| h.as_raw()) {
-                Ok(RawWindowHandle::Wayland(_)) => "Wayland",
-                Ok(RawWindowHandle::Xlib(_)) => "X11 (Xlib)",
-                Ok(RawWindowHandle::Xcb(_)) => "X11 (XCB)",
-                Ok(RawWindowHandle::Win32(_)) => "Win32",
-                Ok(raw) => &format!("{:?}", raw),
-                Err(error) => &error.to_string(),
+                Err(error) => Cow::Owned(error.to_string()),
+                Ok(RawWindowHandle::Wayland(_)) => "Wayland".into(),
+                Ok(RawWindowHandle::Xlib(_)) => "X11 (Xlib)".into(),
+                Ok(RawWindowHandle::Xcb(_)) => "X11 (XCB)".into(),
+                Ok(RawWindowHandle::Win32(_)) => "Win32".into(),
+                Ok(raw) => format!("{:?}", raw).into(),
             },
             adapter.get_info().backend,
             adapter.get_info().device_type,

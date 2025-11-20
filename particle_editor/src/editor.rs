@@ -279,11 +279,9 @@ impl Editor {
                 editor.backend.open_backend_files();
             }
 
-            ui.add_enabled_ui(false, |ui| {
-                if ui.button("Connect by TCP").clicked() {
-                    editor.backend.open_backend_files();
-                }
-            });
+            if ui.button("Connect by TCP").clicked() {
+                editor.backend.open_tcp();
+            }
 
             if editor.backend.reader_connected() || editor.backend.writer_connected() {
                 let button = ui.button("Disconnect");

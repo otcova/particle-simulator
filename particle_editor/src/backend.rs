@@ -57,6 +57,25 @@ impl Backend {
         }
     }
 
+    pub fn open_tcp(&mut self) {
+        let addr = "0.0.0.0:53123";
+
+        match particle_io::new_tcp_server(addr) {
+            Ok((reader, writer)) => {
+                self.reader = Some(reader);
+                self.writer = Some(writer);
+                self.reader_details = format!("{} tcp", addr);
+                self.writer_details = format!("{} tcp", addr);
+            }
+            Err(error) => {
+                self.reader = None;
+                self.writer = None;
+                self.reader_details = error.clone();
+                self.writer_details = error;
+            }
+        }
+    }
+
     pub fn reader_connected(&self) -> bool {
         self.reader.is_some()
     }

@@ -31,7 +31,7 @@ static void runtime(Particle* src, Particle* dst) {
 }
 
 int main() {
-    frontend_init();
+    frontend_init_tcp();
     kernel_init();
 
     // Wait for first frame
