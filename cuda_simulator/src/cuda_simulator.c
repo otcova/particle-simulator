@@ -39,7 +39,7 @@ int main() {
         thrd_yield();
     }
 
-    frame->metadata.dt = 0.0000001;
+    frame->metadata.dt = 0.002;
 
     write_gpu(frame, k_0);
     run_kernel_async(frame, k_0, k_1);

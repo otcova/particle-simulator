@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
 use bytemuck::{
-    bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes, Pod, Zeroable,
+    Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug)]
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug, Default)]
 pub struct Particle {
     pub x: f32,
     pub y: f32,

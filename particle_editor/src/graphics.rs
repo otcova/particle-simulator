@@ -170,16 +170,7 @@ impl Graphics {
         }
     }
 
-    pub fn render(
-        &mut self,
-        gpu: &WgpuContext,
-        encoder: &mut wgpu::CommandEncoder,
-        frame: &Frame,
-        mut rect: Rect<u32>,
-    ) {
-        self.update_particles(gpu, frame);
-        self.update_uniform(gpu);
-
+    pub fn canvas_size(&mut self, mut rect: Rect<u32>) -> Rect<u32> {
         let ratio = 1.; // w / h
         if rect.w > rect.h {
             let new_w = (rect.h as f32 * ratio) as u32;
@@ -190,6 +181,19 @@ impl Graphics {
             rect.y += (rect.h - new_h) / 2;
             rect.h = new_h;
         }
+
+        rect
+    }
+
+    pub fn render(
+        &mut self,
+        gpu: &WgpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &Frame,
+        rect: Rect<u32>,
+    ) {
+        self.update_particles(gpu, frame);
+        self.update_uniform(gpu);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -212,23 +216,21 @@ impl Graphics {
             occlusion_query_set: None,
         });
 
-        if frame.particles().is_empty() {
-            return;
+        if !frame.particles().is_empty() {
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_viewport(
+                rect.x as f32,
+                rect.y as f32,
+                rect.w as f32,
+                rect.h as f32,
+                0.,
+                1.,
+            );
+            // render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
+            render_pass.set_vertex_buffer(0, self.particles_buffer.slice(..));
+            render_pass.set_bind_group(0, &self.bind_group, &[]);
+            render_pass.draw(0..3, 0..frame.particles().len() as u32);
         }
-
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_viewport(
-            rect.x as f32,
-            rect.y as f32,
-            rect.w as f32,
-            rect.h as f32,
-            0.,
-            1.,
-        );
-        render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
-        render_pass.set_vertex_buffer(0, self.particles_buffer.slice(..));
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw(0..3, 0..frame.particles().len() as u32);
     }
 
     fn update_uniform(&mut self, gpu: &WgpuContext) {

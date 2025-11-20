@@ -3,7 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui::Color32;
+use egui::{
+    CentralPanel, Color32, ComboBox, DragValue, FontId, Grid, Key, KeyboardShortcut, Margin,
+    Modifiers, RichText, ScrollArea, SidePanel, Slider, TextFormat, WidgetText,
+};
 use particle_io::Frame;
 use wgpu::hal::Rect;
 use winit::{
@@ -31,6 +34,8 @@ pub struct Editor {
     floating_windows: bool,
     close_window: bool,
 
+    num_formatter: NumFormatter,
+
     // play related
     auto_play: bool,
     loop_play: bool,
@@ -55,12 +60,25 @@ impl Editor {
             floating_windows: false,
             close_window: false,
 
+            num_formatter: NumFormatter {
+                figures: 3,
+                format: NumFormat::Scientific,
+                rgb: [140, 140, 180],
+            },
+
             // play related
             auto_play: false,
             loop_play: true,
-            play_speed: 1.,
+            play_speed: 64.,
             prev_instant: Instant::now(),
         };
+
+        editor.egui.context().style_mut(|style| {
+            style.visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.5 };
+            style.spacing.scroll.bar_width = 6.;
+            style.spacing.scroll.foreground_color = false;
+        });
+
         egui_extras::install_image_loaders(editor.egui.context());
         editor
     }
@@ -116,33 +134,31 @@ impl Editor {
         let ctx = &mut self.egui.context().clone();
 
         if self.floating_windows {
-            egui::CentralPanel::default()
+            CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
                     self.playback_panel(ui);
                 });
         } else {
-            egui::SidePanel::left("left")
-                .resizable(false)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin {
-                                left: 5,
-                                right: 15,
-                                top: 10,
-                                bottom: 10,
-                            })
-                            .show(ui, |ui| self.left_panel(ui))
-                    });
+            SidePanel::left("left").resizable(false).show(ctx, |ui| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(Margin {
+                            left: 5,
+                            right: 20,
+                            top: 10,
+                            bottom: 10,
+                        })
+                        .show(ui, |ui| self.left_panel(ui))
                 });
+            });
 
             egui::TopBottomPanel::bottom("bottom")
                 .resizable(false)
                 .show(ctx, |ui| {
                     egui::Frame::new()
-                        .inner_margin(egui::Margin {
+                        .inner_margin(Margin {
                             left: 5,
                             right: 5,
                             top: 5,
@@ -153,50 +169,55 @@ impl Editor {
         }
 
         self.egui.set_ui_scale(self.ui_scale);
-        let ppp = self.egui.context().pixels_per_point();
 
-        egui::CentralPanel::default()
+        CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
-                let right_rect_points = ui.available_rect_before_wrap();
-                let mut right_rect = egui::Rect::from_min_max(
-                    right_rect_points.min * ppp,
-                    right_rect_points.max * ppp,
+                let rect_points = ui.available_rect_before_wrap();
+
+                let mut rect = egui::Rect::from_min_max(
+                    rect_points.min * ui.pixels_per_point(),
+                    rect_points.max * ui.pixels_per_point(),
                 );
 
-                right_rect.max = right_rect.max.min(egui::Pos2 {
+                rect.max = rect.max.min(egui::Pos2 {
                     x: (self.gpu.surface_size.width - 1) as f32,
                     y: (self.gpu.surface_size.height - 1) as f32,
+                });
+
+                let canvas_rect = self.graphics.canvas_size(Rect {
+                    x: rect.min.x as u32,
+                    y: rect.min.y as u32,
+                    w: rect.size().x as u32,
+                    h: rect.size().y as u32,
                 });
 
                 self.graphics.render(
                     &self.gpu,
                     encoder,
                     self.simulation.frame(self.frame_index),
-                    Rect {
-                        x: right_rect.min.x as u32,
-                        y: right_rect.min.y as u32,
-                        w: right_rect.size().x as u32,
-                        h: right_rect.size().y as u32,
-                    },
+                    canvas_rect,
                 );
+
+                // let fill = ui.style().visuals.panel_fill;
+                // ui.painter().rect_filled(_, 0, fill);
             });
 
         ctx.input_mut(|i| self.keyboard_shortcuts(i));
     }
 
     fn keyboard_shortcuts(&mut self, input: &mut egui::InputState) {
-        let esc = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Escape);
+        let esc = KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
         if input.consume_shortcut(&esc) {
             self.close_window = true;
         }
 
-        let f11 = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::F11);
+        let f11 = KeyboardShortcut::new(Modifiers::NONE, Key::F11);
         if input.consume_shortcut(&f11) {
             self.toggle_fullscreen();
         }
 
-        let space = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Space);
+        let space = KeyboardShortcut::new(Modifiers::NONE, Key::Space);
         if input.consume_shortcut(&space) {
             self.auto_play = !self.auto_play;
             self.prev_instant = Instant::now();
@@ -236,30 +257,6 @@ impl Editor {
     }
 
     fn left_panel(&mut self, ui: &mut egui::Ui) {
-        self.ui_section(ui, "Window", |editor, ui| {
-            if ui.button("Full Screen").clicked() {
-                editor.toggle_fullscreen();
-            }
-
-            ui.horizontal(|ui| {
-                ui.label("UI size ");
-                ui.add(
-                    egui::DragValue::new(&mut editor.ui_scale)
-                        .range(0.5..=3.0)
-                        .prefix("x")
-                        .speed(0.01),
-                );
-            });
-
-            if editor.floating_windows {
-                if ui.button("Reconstruct").clicked() {
-                    editor.floating_windows = false;
-                }
-            } else if ui.button("Boom").clicked() {
-                editor.floating_windows = true;
-            }
-        });
-
         self.ui_section(ui, "Backend", |editor, ui| {
             ui.collapsing(
                 format!("Backend Output: {:?}", editor.backend.reader_state()),
@@ -291,7 +288,85 @@ impl Editor {
             }
         });
 
-        self.ui_section(ui, "Simulation", |editor, ui| {
+        self.ui_section(ui, "Stats", |editor, ui| {
+            Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
+                ui.label("Time");
+                ui.label(editor.num(12.21311e-6, "s"));
+                ui.end_row();
+
+                ui.label("Step delta time");
+                ui.label(editor.num(3.2113e-4, "s"));
+                ui.end_row();
+
+                ui.label("Num Particles");
+                ui.label(editor.num(100., ""));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Temperature");
+                ui.vertical(|ui| {
+                    ui.label(editor.num(100., "K"));
+                    ui.label(editor.num(100. - 273.15, "ºC"));
+                });
+                ui.end_row();
+
+                ui.label("2D Pressure");
+                ui.label(editor.num(12345., "N/m"));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Kinetic energy");
+                ui.label(editor.num(0.0000412412, "J"));
+                ui.end_row();
+
+                ui.label("Potential energy");
+                ui.label(editor.num(0.000012122, "J"));
+                ui.end_row();
+
+                ui.label("Total energy");
+                ui.label(editor.num(0.000051234124, "J"));
+                ui.end_row();
+            });
+        });
+
+        self.ui_section(ui, "Parameters", |editor, ui| {
+            Grid::new("params-grid").num_columns(2).show(ui, |ui| {
+                ui.label("Step delta time");
+                ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                ui.end_row();
+
+                ui.label("Box size");
+                ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                ui.end_row();
+
+                ui.label("Data structure");
+                ComboBox::from_id_salt("Data structure")
+                    .selected_text("Compact Array")
+                    .show_ui(ui, |ui| {
+                        let mut v = 0;
+                        ui.selectable_value(&mut v, 0, "Compact Array");
+                        ui.selectable_value(&mut v, 1, "Matrix Buckets");
+                    });
+                ui.end_row();
+            });
+        });
+
+        self.ui_section(ui, "Timeline", |editor, ui| {
+            Grid::new("memory-grid").num_columns(2).show(ui, |ui| {
+                ui.label("Timeline RAM");
+                let ram = editor.simulation.timeline_ram();
+                if ram < 1000 {
+                    ui.label(format!("{} B", ram));
+                } else {
+                    let mut f = editor.num_formatter;
+                    f.figures = 1;
+                    ui.label(f.fmt(ram as f32, "B"));
+                }
+                ui.end_row();
+            });
+
             if ui.button("Clear Timeline").clicked() {
                 editor.simulation.clear();
             }
@@ -301,7 +376,7 @@ impl Editor {
             ui.collapsing("Load Square", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Size ");
-                    ui.add(egui::Slider::new(&mut editor.box_size, 0..=20));
+                    ui.add(Slider::new(&mut editor.box_size, 0..=20));
                 });
 
                 ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
@@ -314,27 +389,72 @@ impl Editor {
             });
         });
 
-        self.ui_section(ui, "Render", |editor, ui| {
-            ui.horizontal(|ui| {
-                ui.label("Background Color: ");
-                ui.color_edit_button_srgb(&mut editor.graphics.background_color);
-            });
+        self.ui_section(ui, "GUI", |editor, ui| {
+            Grid::new("window-grid").num_columns(2).show(ui, |ui| {
+                ui.label("GUI size ");
+                ui.add(
+                    DragValue::new(&mut editor.ui_scale)
+                        .range(0.5..=3.0)
+                        .prefix("x")
+                        .speed(0.01),
+                );
+                ui.end_row();
 
-            ui.horizontal(|ui| {
+                ui.label("Number Format ");
+                ComboBox::from_id_salt("Number Format")
+                    .selected_text(editor.num_formatter.format.name())
+                    .show_ui(ui, |ui| {
+                        let f = &mut editor.num_formatter.format;
+                        use NumFormat::*;
+                        ui.selectable_value(f, Dashed, Dashed.name());
+                        ui.selectable_value(f, Scientific, Scientific.name());
+                        ui.selectable_value(f, Metric, Metric.name());
+                    });
+                ui.end_row();
+
+                ui.label("Significant Digits");
+                ui.add(DragValue::new(&mut editor.num_formatter.figures).range(1..=8));
+                ui.end_row();
+
+                ui.label("Background Color");
+                ui.color_edit_button_srgb(&mut editor.graphics.background_color);
+                ui.end_row();
+
+                ui.label("Number Color");
+                ui.color_edit_button_srgb(&mut editor.num_formatter.rgb);
+                ui.end_row();
+
                 let rtx_names = ["Off", "Ultra", "RGB"];
                 let rtx = &mut editor.graphics.uniform.rtx;
                 let rtx_idx = (*rtx as usize).min(rtx_names.len() - 1);
 
-                ui.label("RTX: ");
-                egui::ComboBox::from_id_salt("RTX: ")
+                ui.label("RTX");
+                ComboBox::from_id_salt("RTX")
                     .selected_text(rtx_names[rtx_idx])
                     .show_ui(ui, |ui| {
                         ui.selectable_value(rtx, 0, rtx_names[0]);
                         ui.selectable_value(rtx, 1, rtx_names[1]);
                         ui.selectable_value(rtx, 2, rtx_names[2]);
                     });
+                ui.end_row();
             });
+
+            if ui.button("Full Screen").clicked() {
+                editor.toggle_fullscreen();
+            }
+
+            if editor.floating_windows {
+                if ui.button("Reconstruct").clicked() {
+                    editor.floating_windows = false;
+                }
+            } else if ui.button("Boom").clicked() {
+                editor.floating_windows = true;
+            }
         });
+    }
+
+    fn num(&self, n: f32, unit: &'static str) -> WidgetText {
+        self.num_formatter.fmt(n, unit)
     }
 
     // can be optimized to only recalculate widgets width when necessary
@@ -387,7 +507,7 @@ impl Editor {
                     );
 
                     if ui.button(self.play_speed.to_string() + "x").clicked() {
-                        const MAX_SPEED: f32 = 8.;
+                        const MAX_SPEED: f32 = 1024.;
                         const MIN_SPEED: f32 = 0.5;
 
                         self.play_speed *= 2.;
@@ -451,4 +571,127 @@ impl Editor {
             content(ui);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumFormat {
+    Dashed,
+    Scientific,
+    Metric,
+}
+
+impl NumFormat {
+    const fn name(self) -> &'static str {
+        match self {
+            NumFormat::Dashed => "Dashed",
+            NumFormat::Scientific => "Scientific",
+            NumFormat::Metric => "Metric",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NumFormatter {
+    format: NumFormat,
+    figures: u32,
+    rgb: [u8; 3],
+}
+
+impl NumFormatter {
+    fn fmt(&self, n: f32, unit: &'static str) -> WidgetText {
+        let sign = if n < 0. { "-" } else { " " };
+        let n = n.abs();
+
+        let figs = self.figures as usize;
+        let color = Color32::from_rgb(self.rgb[0], self.rgb[1], self.rgb[2]);
+        let font_id = FontId::monospace(12.);
+        let exp_font = FontId::monospace(10.);
+
+        match self.format {
+            NumFormat::Dashed => {
+                let decs = decimals_for_figures(n, self.figures);
+                RichText::new(format!("{sign}{:.*} {unit}", decs, n))
+                    .color(color)
+                    .font(font_id)
+                    .into()
+            }
+            NumFormat::Scientific => {
+                let mut exp = n.log10();
+                if exp == f32::NEG_INFINITY {
+                    exp = 0.;
+                }
+                let exp = exp.floor() as i32;
+                let mantissa = n / 10_f32.powi(exp);
+
+                let mut text = egui::text::LayoutJob::default();
+                text.append(
+                    &format!("{sign}{:.*}·10", figs - 1, mantissa),
+                    0.,
+                    TextFormat {
+                        color,
+                        font_id: font_id.clone(),
+                        ..Default::default()
+                    },
+                );
+                text.append(
+                    &format!("{} ", exp),
+                    0.,
+                    TextFormat {
+                        color,
+                        valign: egui::Align::TOP,
+                        font_id: exp_font,
+                        ..Default::default()
+                    },
+                );
+                text.append(
+                    unit,
+                    0.,
+                    TextFormat {
+                        color,
+                        font_id,
+                        ..Default::default()
+                    },
+                );
+                text.into()
+            }
+            NumFormat::Metric => {
+                const METRIC: &[(f32, &str)] = &[
+                    (1e9, "G"),
+                    (1e6, "M"),
+                    (1e3, "k"),
+                    (1.0, ""),
+                    (1e-3, "m"),
+                    (1e-6, "µ"),
+                    (1e-9, "n"),
+                    (1e-12, "p"),
+                    (1e-15, "f"),
+                ];
+
+                let mut metric = *METRIC.last().unwrap();
+                for &(divisor, suffix) in METRIC {
+                    let threshold = divisor;
+                    if n >= threshold {
+                        metric = (divisor, suffix);
+                        break;
+                    }
+                }
+
+                let scaled = n / metric.0;
+                let decs = decimals_for_figures(scaled, self.figures);
+                RichText::new(format!("{sign}{:.*} {}{unit}", decs, scaled, metric.1))
+                    .color(color)
+                    .font(font_id)
+                    .into()
+            }
+        }
+    }
+}
+
+fn decimals_for_figures(n: f32, sign_figures: u32) -> usize {
+    let exp10 = n.abs().log10();
+    if exp10 == f32::NEG_INFINITY {
+        return 0;
+    }
+    let digits = exp10.floor() as isize + 1;
+    (sign_figures as isize - digits).max(0) as usize
 }

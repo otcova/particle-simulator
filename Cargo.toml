@@ -3,7 +3,11 @@ members = ["particle_editor", "particle_io", "particle_io/c_api"]
 resolver = "3"
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
+debug = "limited"
+
+[profile.dev.package."*"]
+opt-level = "z"
 
 [profile.release]
 strip = true

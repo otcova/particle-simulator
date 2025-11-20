@@ -20,16 +20,25 @@ impl WgpuContext {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).unwrap();
 
+        log::info!(
+            "Available: {:?}",
+            instance
+                .enumerate_adapters(wgpu::Backends::all())
+                .iter()
+                .map(|adapter| adapter.get_info())
+                .map(|info| format!("{:?} {:?}", info.backend, info.device_type))
+        );
+
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::LowPower,
                 ..Default::default()
             })
             .await
             .unwrap();
         log::info!(
-            "Created a {} window with {:?} {:?}",
+            "Selected: {} + {:?} {:?}",
             match window.window_handle().map(|h| h.as_raw()) {
                 Err(error) => Cow::Owned(error.to_string()),
                 Ok(RawWindowHandle::Wayland(_)) => "Wayland".into(),
