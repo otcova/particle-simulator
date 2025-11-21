@@ -1,12 +1,11 @@
 #pragma once
 #include <assert.h>
 #include <particle_io.h>
+#include <cuda_runtime.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include "log.h"
-
-#define SIMULATION_STEPS 10000
 
 #define BUCKET_CAPACITY 16
 #define BUCKETS_X 32
@@ -18,6 +17,19 @@ static Particle* k_0;
 static Particle* k_1;
 static Particle* k_internal;
 static FrameHeader* frame;
+
+__global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count) return;
+    
+    Particle p = src[i];
+
+    dst[i].x = p.x + p.vx * dt;
+    dst[i].y = p.y + p.vy * dt;
+    dst[i].vx = p.vx;
+    dst[i].vy = p.vy;
+    dst[i].ty = p.ty;
+}
 
 static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) {
@@ -31,16 +43,24 @@ static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
     }
 }
 
-static void run_kernel_async(FrameHeader* frame, Particle* k_src, Particle* k_dst) {
-    const uint32_t steps = SIMULATION_STEPS | 1;
+static void step(Particle* src, Particle* dst, float dt, uint32_t count) {
+    // cpu_kernel(src, dst, dt, count);
+    
+    uint32_t nThreads = 256;
+    uint32_t nBlocks = (count + nThreads - 1) / nThreads;
+    gpu_kernel<<<nBlocks, nThreads>>>(src, dst, dt, count);
+}
 
-    float dt = frame->metadata.dt / steps;
+static void run_kernel_async(FrameHeader* frame, Particle* k_src, Particle* k_dst) {
+    const uint32_t steps = frame->metadata.steps_per_frame | 1;
+
+    float dt = frame->metadata.step_dt / steps;
     uint32_t count = frame->particles_count;
 
-    cpu_kernel(k_src, k_dst, dt, count);
+    step(k_src, k_dst, dt, count);
     for (uint32_t i = 1; i < steps; i += 2) {
-        cpu_kernel(k_dst, k_internal, dt, count);
-        cpu_kernel(k_internal, k_dst, dt, count);
+        step(k_dst, k_internal, dt, count);
+        step(k_internal, k_dst, dt, count);
     }
 }
 
@@ -50,8 +70,10 @@ static void sync_kernel() {
 
 // Convert a list of particles into the data-structure used by the kernel
 static void frame_prepare(FrameHeader* src, FrameHeader* dst) {
+    memcpy((void*)dst, (void*)src, packet_size(src->particles_count));
+
     // Compact array
-    frame_compact_into(src, dst);
+    // frame_compact_into(src, dst);
 
     // // Bucket Matrix
     // uint32_t bucket_len[BUCKETS_X * BUCKETS_Y];
@@ -81,24 +103,24 @@ static void frame_prepare(FrameHeader* src, FrameHeader* dst) {
 static void kernel_init() {
     size_t k_size = sizeof(Particle) * MAX_PARTICLE_COUNT;
 
-    k_0 = (Particle*)malloc(k_size);
+    cudaMalloc((void**)&k_0, k_size * 2);
     assert(k_0);
 
-    k_1 = (Particle*)malloc(k_size);
+    cudaMalloc((void**)&k_1, k_size * 2);
     assert(k_1);
 
-    k_internal = (Particle*)malloc(k_size);
+    cudaMalloc((void**)&k_internal, k_size * 2);
     assert(k_internal);
 
-    frame = (FrameHeader*)malloc(packet_size(MAX_PARTICLE_COUNT));
+    cudaMallocHost((void**)&frame, packet_size(MAX_PARTICLE_COUNT) * 2);
     assert(frame);
 
     *frame = frame_header_init();
 }
 
 static void kernel_destroy() {
-    free(k_0);
-    free(k_1);
-    free(k_internal);
-    free(frame);
+    cudaFree(k_0);
+    cudaFree(k_1);
+    cudaFree(k_internal);
+    cudaFreeHost(frame);
 }

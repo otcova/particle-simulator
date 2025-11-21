@@ -4,16 +4,17 @@
 #include <threads.h>
 #include "frontend.h"
 #include "kernel.h"
-#include "particle_io.h"
 
 static void write_gpu(FrameHeader* src, Particle* dst) {
     size_t size = sizeof(Particle) * src->particles_count;
-    memcpy(dst, &src->particles, size);
+    // memcpy(dst, &src->particles, size);
+    cudaMemcpy(dst, &src->particles, size, cudaMemcpyHostToDevice);
 }
 
 static void read_gpu(Particle* src, FrameHeader* dst) {
     size_t size = sizeof(Particle) * dst->particles_count;
-    memcpy(&dst->particles, src, size);
+    // memcpy(&dst->particles, src, size);
+    cudaMemcpy(&dst->particles, src, size, cudaMemcpyDeviceToHost);
 }
 
 static void runtime(Particle* src, Particle* dst) {
@@ -39,7 +40,9 @@ int main() {
         thrd_yield();
     }
 
-    frame->metadata.dt = 0.002;
+    frame_print(frame);
+    frame->metadata.step_dt = 0.000002;
+    //frame->metadata.steps_per_frame = 100000;
 
     write_gpu(frame, k_0);
     run_kernel_async(frame, k_0, k_1);
