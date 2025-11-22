@@ -27,6 +27,7 @@ impl WgpuContext {
                 .iter()
                 .map(|adapter| adapter.get_info())
                 .map(|info| format!("{:?} {:?}", info.backend, info.device_type))
+                .collect::<Vec<_>>()
         );
 
         let adapter = instance

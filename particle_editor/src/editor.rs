@@ -7,7 +7,7 @@ use egui::{
     CentralPanel, Color32, ComboBox, DragValue, FontId, Grid, Key, KeyboardShortcut, Margin,
     Modifiers, RichText, ScrollArea, SidePanel, Slider, TextFormat, WidgetText,
 };
-use particle_io::Frame;
+use particle_io::{Frame, FrameMetadata};
 use wgpu::hal::Rect;
 use winit::{
     dpi::PhysicalSize,
@@ -35,6 +35,8 @@ pub struct Editor {
     close_window: bool,
 
     num_formatter: NumFormatter,
+
+    sim_params: FrameMetadata,
 
     // play related
     auto_play: bool,
@@ -65,6 +67,8 @@ impl Editor {
                 format: NumFormat::Scientific,
                 rgb: [140, 140, 180],
             },
+
+            sim_params: FrameMetadata::default(),
 
             // play related
             auto_play: false,
@@ -333,8 +337,20 @@ impl Editor {
 
         self.ui_section(ui, "Parameters", |editor, ui| {
             Grid::new("params-grid").num_columns(2).show(ui, |ui| {
+                let mut params = editor.sim_params;
+
                 ui.label("Step delta time");
-                ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                ui.add(Slider::new(&mut params.step_dt, 1e-10..=1e-1).logarithmic(true));
+                ui.end_row();
+
+                ui.label("Steps per frame");
+                ui.add(Slider::new(&mut params.steps_per_frame, 1..=1000000).logarithmic(true));
+                ui.end_row();
+
+                ui.label("Frame delta time");
+                ui.label(editor.num(0.000123, "s"));
+                ui.end_row();
+
                 ui.end_row();
 
                 ui.label("Box size");
@@ -350,6 +366,11 @@ impl Editor {
                         ui.selectable_value(&mut v, 1, "Matrix Buckets");
                     });
                 ui.end_row();
+
+                if editor.sim_params != params {
+                    // Params changed => Send to backend
+                }
+                editor.sim_params = params;
             });
         });
 
@@ -361,7 +382,7 @@ impl Editor {
                     ui.label(format!("{} B", ram));
                 } else {
                     let mut f = editor.num_formatter;
-                    f.figures = 1;
+                    f.figures = 3;
                     ui.label(f.fmt(ram as f32, "B"));
                 }
                 ui.end_row();
@@ -382,8 +403,11 @@ impl Editor {
                 ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
                     if ui.button("Send To Backend").clicked() {
                         let mut frame = Frame::new();
+                        *frame.metadata_mut() = editor.sim_params;
                         frame.push_square(editor.box_size);
                         editor.backend.write(&frame);
+                        // editor.backend.close_connection();
+                        // editor.backend.open_tcp();
                     }
                 });
             });
