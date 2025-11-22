@@ -23,7 +23,8 @@ impl Particle {
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default)]
 pub struct FrameMetadata {
-    pub dt: f32,
+    pub step_dt: f32,
+    pub steps_per_frame: u32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -87,7 +88,12 @@ impl Display for Frame {
         if !self.header().is_valid() {
             writeln!(f, "  signature error")?;
         }
-        writeln!(f, "  dt = {}", self.metadata().dt)?;
+        let FrameMetadata {
+            step_dt,
+            steps_per_frame,
+        } = *self.metadata();
+        writeln!(f, "  step dt = {}", step_dt)?;
+        writeln!(f, "  steps per frame = {}", steps_per_frame)?;
         writeln!(f, "  particle_count = {}", self.particles().len())?;
         for (i, p) in self.particles().iter().enumerate().take(5) {
             writeln!(
@@ -216,8 +222,8 @@ impl Frame {
                 let c = (idx_x + 621876523).wrapping_mul(4124124122);
                 let d = (idx_y + 364373752).wrapping_mul(1423513984);
 
-                let vx = (a ^ b) as f32 / u32::MAX as f32;
-                let vy = (c ^ d) as f32 / u32::MAX as f32;
+                let vx = ((a ^ b) % 1024) as f32 / 1024.;
+                let vy = ((c ^ d) % 1024) as f32 / 1024.;
 
                 let mut x = 0.5;
                 let mut y = 0.5;
@@ -231,8 +237,8 @@ impl Frame {
                 self.push(Particle {
                     x: (x + 0.5) * 0.5,
                     y: (y + 0.5) * 0.5,
-                    vx: (vx + 0.5) * 0.5,
-                    vy: (vy + 0.5) * 0.5,
+                    vx: (vx - 0.5) * 1000000.,
+                    vy: (vy - 0.5) * 1000000.,
                     ty: 1,
                 });
             }
