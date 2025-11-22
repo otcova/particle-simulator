@@ -21,7 +21,7 @@ static FrameHeader* frame;
 __global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
-    
+
     Particle p = src[i];
 
     dst[i].x = p.x + p.vx * dt;
@@ -29,6 +29,9 @@ __global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32
     dst[i].vx = p.vx;
     dst[i].vy = p.vy;
     dst[i].ty = p.ty;
+
+    if (dst[i].x > 1.) dst[i].x = 0.;
+    if (dst[i].y > 1.) dst[i].y = 0.;
 }
 
 static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
@@ -45,16 +48,16 @@ static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
 
 static void step(Particle* src, Particle* dst, float dt, uint32_t count) {
     // cpu_kernel(src, dst, dt, count);
-    
+
     uint32_t nThreads = 256;
     uint32_t nBlocks = (count + nThreads - 1) / nThreads;
     gpu_kernel<<<nBlocks, nThreads>>>(src, dst, dt, count);
 }
 
 static void run_kernel_async(FrameHeader* frame, Particle* k_src, Particle* k_dst) {
-    const uint32_t steps = frame->metadata.steps_per_frame | 1;
+    const uint32_t steps = 1000 | 1;//frame->metadata.steps_per_frame | 1;
 
-    float dt = frame->metadata.step_dt / steps;
+    float dt = frame->metadata.dt / steps;
     uint32_t count = frame->particles_count;
 
     step(k_src, k_dst, dt, count);

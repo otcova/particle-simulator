@@ -16,6 +16,7 @@ fn main() {
         .with_pragma_once(true)
         .with_sys_include("stdint.h")
         .with_sys_include("stdbool.h")
+        .with_cpp_compat(true)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(crate_dir.join("include/particle_io.h"));

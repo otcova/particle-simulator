@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 use egui::{
     CentralPanel, Color32, ComboBox, DragValue, FontId, Grid, Key, KeyboardShortcut, Margin,
@@ -29,7 +26,6 @@ pub struct Editor {
     backend: Backend,
 
     ui_scale: f32,
-    frame_index: u32,
     box_size: u32,
     floating_windows: bool,
     close_window: bool,
@@ -37,17 +33,17 @@ pub struct Editor {
     num_formatter: NumFormatter,
 
     // play related
+    play_time: f32,
+    play_speed: f32,
     auto_play: bool,
     loop_play: bool,
-    play_speed: f32,
-    prev_instant: Instant,
 }
 
 impl Editor {
     pub async fn new(window: Arc<Window>) -> Editor {
         let gpu = WgpuContext::new(window).await;
 
-        let editor = Editor {
+        let mut editor = Editor {
             egui: EguiContext::new(&gpu, None, 1),
             graphics: Graphics::new(&gpu),
             simulation: Simulation::new(),
@@ -55,7 +51,6 @@ impl Editor {
             gpu,
 
             ui_scale: 1.15,
-            frame_index: 0,
             box_size: 5,
             floating_windows: false,
             close_window: false,
@@ -67,10 +62,10 @@ impl Editor {
             },
 
             // play related
+            play_time: 0.,
+            play_speed: 0.01,
             auto_play: false,
             loop_play: true,
-            play_speed: 64.,
-            prev_instant: Instant::now(),
         };
 
         editor.egui.context().style_mut(|style| {
@@ -79,6 +74,7 @@ impl Editor {
             style.spacing.scroll.foreground_color = false;
         });
 
+        editor.backend.open_tcp();
         egui_extras::install_image_loaders(editor.egui.context());
         editor
     }
@@ -88,20 +84,13 @@ impl Editor {
 
         self.simulation.update(&mut self.backend);
 
-        let cur_n_frames = self.simulation.timeline_frames_count();
-        #[allow(clippy::collapsible_if)]
-        if self.auto_play && cur_n_frames > 0 {
-            if self.prev_instant.elapsed() > Duration::from_millis((1000. / self.play_speed) as u64)
-            {
-                self.prev_instant = Instant::now();
-
-                self.frame_index += 1;
-                if self.frame_index >= cur_n_frames {
-                    if self.loop_play {
-                        self.frame_index = 0;
-                    } else {
-                        self.frame_index = cur_n_frames - 1;
-                    }
+        if self.auto_play {
+            self.play_time += self.play_speed;
+            if self.play_time > self.simulation.sim_len() {
+                if self.loop_play {
+                    self.play_time = 0.;
+                } else {
+                    self.play_time = self.simulation.sim_len();
                 }
             }
         }
@@ -195,7 +184,7 @@ impl Editor {
                 self.graphics.render(
                     &self.gpu,
                     encoder,
-                    self.simulation.frame(self.frame_index),
+                    self.simulation.frame(self.play_time),
                     canvas_rect,
                 );
 
@@ -220,7 +209,6 @@ impl Editor {
         let space = KeyboardShortcut::new(Modifiers::NONE, Key::Space);
         if input.consume_shortcut(&space) {
             self.auto_play = !self.auto_play;
-            self.prev_instant = Instant::now();
         }
     }
 
@@ -286,6 +274,24 @@ impl Editor {
                     editor.backend.close_connection();
                 }
             }
+        });
+
+        self.ui_section(ui, "Editor", |editor, ui| {
+            ui.collapsing("Load Square", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Size ");
+                    ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                });
+
+                ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
+                    if ui.button("Send To Backend").clicked() {
+                        let mut frame = Frame::new();
+                        frame.metadata_mut().dt = 0.100002;
+                        frame.push_square(editor.box_size);
+                        editor.backend.write(&frame);
+                    }
+                });
+            });
         });
 
         self.ui_section(ui, "Stats", |editor, ui| {
@@ -372,23 +378,6 @@ impl Editor {
             }
         });
 
-        self.ui_section(ui, "Editor", |editor, ui| {
-            ui.collapsing("Load Square", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Size ");
-                    ui.add(Slider::new(&mut editor.box_size, 0..=20));
-                });
-
-                ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
-                    if ui.button("Send To Backend").clicked() {
-                        let mut frame = Frame::new();
-                        frame.push_square(editor.box_size);
-                        editor.backend.write(&frame);
-                    }
-                });
-            });
-        });
-
         self.ui_section(ui, "GUI", |editor, ui| {
             Grid::new("window-grid").num_columns(2).show(ui, |ui| {
                 ui.label("GUI size ");
@@ -464,19 +453,24 @@ impl Editor {
                 // timeline bar
 
                 ui.horizontal(|ui| {
-                    let frames_count = self.simulation.timeline_frames_count();
+                    /*let frames_count = self.simulation.timeline_frames_count();
                     let mut cursor = if self.frame_index == 0 {
                         0
                     } else {
                         frames_count.min(self.frame_index + 1)
-                    };
+                    };*/
+
+                    let t_time = self.simulation.sim_len();
+
+                    let mut cursor = self.play_time;
 
                     ui.style_mut().spacing.slider_width = 0.;
                     let resp = ui.add_visible(
                         false,
-                        egui::Slider::new(&mut cursor, frames_count.min(1)..=frames_count)
-                            .suffix(format!("/{}", frames_count))
-                            .trailing_fill(true),
+                        egui::Slider::new(&mut cursor, (0.)..=t_time)
+                            .suffix(format!("/{:.2}", t_time))
+                            .trailing_fill(true)
+                            .custom_formatter(|n, _| format!("{:.2}", n)),
                     );
 
                     ui.add_space(-resp.rect.width() - 8.);
@@ -484,19 +478,20 @@ impl Editor {
                         (0 as f32).max(ui.available_width() - resp.rect.width());
 
                     ui.add(
-                        egui::Slider::new(&mut cursor, frames_count.min(1)..=frames_count)
-                            .suffix(format!("/{}", frames_count))
-                            .trailing_fill(true),
+                        egui::Slider::new(&mut cursor, (0.)..=t_time)
+                            .suffix(format!("/{:.2}s", t_time))
+                            .trailing_fill(true)
+                            .custom_formatter(|n, _| format!("{:.2}", n)),
                     );
 
-                    self.frame_index = cursor.saturating_sub(1);
+                    self.play_time = cursor;
+                    //self.frame_index = cursor.saturating_sub(1);
                 });
 
                 // play buttons
                 ui.horizontal(|ui| {
                     let tot_space = ui.available_width();
-                    let resp =
-                        ui.add_visible(false, egui::Button::new(self.play_speed.to_string() + "x"));
+                    let resp = ui.add_visible(false, egui::DragValue::new(&mut self.play_speed));
 
                     // 22.96875: buttons width (pre-measured/observed)
                     ui.add_space(
@@ -506,22 +501,24 @@ impl Editor {
                             - (2. * resp.rect.width() + 2. * 8.), // to make the speed button/s not affect others positions
                     );
 
-                    if ui.button(self.play_speed.to_string() + "x").clicked() {
-                        const MAX_SPEED: f32 = 1024.;
-                        const MIN_SPEED: f32 = 0.5;
+                    const MAX_SPEED: f32 = 10.24;
+                    const MIN_SPEED: f32 = 0.01;
 
-                        self.play_speed *= 2.;
-                        if self.play_speed > MAX_SPEED {
-                            self.play_speed = MIN_SPEED;
-                        }
-                    }
+                    let drag_speed = if self.play_speed < 1. { 0.01 } else { 0.01 };
+
+                    ui.add(
+                        egui::DragValue::new(&mut self.play_speed)
+                            .range(MIN_SPEED..=MAX_SPEED)
+                            .speed(drag_speed),
+                    );
+
                     if ui
                         .add(egui::Button::image(egui::Image::new(egui::include_image!(
                             "../icons/media-seek-backward.png"
                         ))))
                         .clicked()
                     {
-                        self.frame_index = self.frame_index.saturating_sub(1);
+                        self.play_time = (self.play_time - self.play_speed).max(0.);
                     }
 
                     if ui
@@ -533,7 +530,6 @@ impl Editor {
                         .clicked()
                     {
                         self.auto_play = !self.auto_play;
-                        self.prev_instant = Instant::now();
                     }
 
                     if ui
@@ -542,11 +538,12 @@ impl Editor {
                         ))))
                         .clicked()
                     {
-                        if self.simulation.timeline_frames_count() > self.frame_index + 1 {
-                            self.frame_index += 1;
-                        } else {
-                            self.frame_index = 0;
-                        }
+                        self.play_time =
+                            if self.play_time + self.play_speed < self.simulation.sim_len() {
+                                self.play_time + self.play_speed
+                            } else {
+                                self.simulation.sim_len()
+                            }
                     }
 
                     if ui

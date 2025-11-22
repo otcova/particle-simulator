@@ -22,6 +22,7 @@ static void runtime(Particle* src, Particle* dst) {
     run_kernel_async(frame, src, dst);
 
     if (receive_from_frontend(frame)) {
+        frame_print(frame);
         write_gpu(frame, src);
         run_kernel_async(frame, src, dst);
         send_to_frontend(frame);
@@ -41,7 +42,7 @@ int main() {
     }
 
     frame_print(frame);
-    frame->metadata.step_dt = 0.000002;
+    frame->metadata.dt = 0.100002;
     //frame->metadata.steps_per_frame = 100000;
 
     write_gpu(frame, k_0);
