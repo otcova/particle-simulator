@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use egui::{
     CentralPanel, Color32, ComboBox, DragValue, FontId, Grid, Key, KeyboardShortcut, Margin,
-    Modifiers, RichText, ScrollArea, SidePanel, Slider, TextFormat, WidgetText,
+    Modifiers, Pos2, RichText, ScrollArea, SidePanel, Slider, TextFormat, Vec2, WidgetText,
 };
 use particle_io::{Frame, FrameMetadata};
 use wgpu::hal::Rect;
@@ -214,6 +214,26 @@ impl Editor {
         if input.consume_shortcut(&space) {
             self.auto_play = !self.auto_play;
         }
+
+        let left = KeyboardShortcut::new(Modifiers::NONE, Key::ArrowLeft);
+        if input.consume_shortcut(&left) {
+            self.play_time = (self.play_time - self.play_speed).max(0.);
+        }
+
+        let right = KeyboardShortcut::new(Modifiers::NONE, Key::ArrowRight);
+        if input.consume_shortcut(&right) {
+            self.play_time = if self.play_time + self.play_speed > self.simulation.sim_len() {
+                0.
+            } else {
+                self.play_time + self.play_speed
+            };
+        }
+
+        // ignore this one
+        let d = KeyboardShortcut::new(Modifiers::NONE, Key::D);
+        if input.consume_shortcut(&d) {
+            println!("{:?}", self.simulation.print(self.play_time));
+        }
     }
 
     fn ui_section<F>(&mut self, ui: &mut egui::Ui, title: &'static str, content: F)
@@ -290,11 +310,50 @@ impl Editor {
                 ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
                     if ui.button("Send To Backend").clicked() {
                         let mut frame = Frame::new();
-                        frame.metadata_mut().dt = 0.100002;
+                        *frame.metadata_mut() = editor.sim_params;
                         frame.push_square(editor.box_size);
                         editor.backend.write(&frame);
                     }
                 });
+            });
+        });
+
+        self.ui_section(ui, "Parameters", |editor, ui| {
+            Grid::new("params-grid").num_columns(2).show(ui, |ui| {
+                let mut params = editor.sim_params;
+
+                ui.label("Step delta time");
+                ui.add(Slider::new(&mut params.step_dt, 1e-10..=1e-1).logarithmic(true));
+                ui.end_row();
+
+                ui.label("Steps per frame");
+                ui.add(Slider::new(&mut params.steps_per_frame, 1..=1000000).logarithmic(true));
+                ui.end_row();
+
+                ui.label("Frame delta time");
+                ui.label(editor.num(0.000123, "s"));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Box size");
+                ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                ui.end_row();
+
+                ui.label("Data structure");
+                ComboBox::from_id_salt("Data structure")
+                    .selected_text("Compact Array")
+                    .show_ui(ui, |ui| {
+                        let mut v = 0;
+                        ui.selectable_value(&mut v, 0, "Compact Array");
+                        ui.selectable_value(&mut v, 1, "Matrix Buckets");
+                    });
+                ui.end_row();
+
+                if editor.sim_params != params {
+                    // Params changed => Send to backend
+                }
+                editor.sim_params = params;
             });
         });
 
@@ -338,45 +397,6 @@ impl Editor {
                 ui.label("Total energy");
                 ui.label(editor.num(0.000051234124, "J"));
                 ui.end_row();
-            });
-        });
-
-        self.ui_section(ui, "Parameters", |editor, ui| {
-            Grid::new("params-grid").num_columns(2).show(ui, |ui| {
-                let mut params = editor.sim_params;
-
-                ui.label("Step delta time");
-                ui.add(Slider::new(&mut params.step_dt, 1e-10..=1e-1).logarithmic(true));
-                ui.end_row();
-
-                ui.label("Steps per frame");
-                ui.add(Slider::new(&mut params.steps_per_frame, 1..=1000000).logarithmic(true));
-                ui.end_row();
-
-                ui.label("Frame delta time");
-                ui.label(editor.num(0.000123, "s"));
-                ui.end_row();
-
-                ui.end_row();
-
-                ui.label("Box size");
-                ui.add(Slider::new(&mut editor.box_size, 0..=20));
-                ui.end_row();
-
-                ui.label("Data structure");
-                ComboBox::from_id_salt("Data structure")
-                    .selected_text("Compact Array")
-                    .show_ui(ui, |ui| {
-                        let mut v = 0;
-                        ui.selectable_value(&mut v, 0, "Compact Array");
-                        ui.selectable_value(&mut v, 1, "Matrix Buckets");
-                    });
-                ui.end_row();
-
-                if editor.sim_params != params {
-                    // Params changed => Send to backend
-                }
-                editor.sim_params = params;
             });
         });
 
@@ -474,14 +494,9 @@ impl Editor {
                 // timeline bar
 
                 ui.horizontal(|ui| {
-                    /*let frames_count = self.simulation.timeline_frames_count();
-                    let mut cursor = if self.frame_index == 0 {
-                        0
-                    } else {
-                        frames_count.min(self.frame_index + 1)
-                    };*/
-
                     let t_time = self.simulation.sim_len();
+
+                    let t_time_text = self.num_formatter.raw_string(t_time, "s");
 
                     let mut cursor = self.play_time;
 
@@ -489,9 +504,8 @@ impl Editor {
                     let resp = ui.add_visible(
                         false,
                         egui::Slider::new(&mut cursor, (0.)..=t_time)
-                            .suffix(format!("/{:.2}", t_time))
-                            .trailing_fill(true)
-                            .custom_formatter(|n, _| format!("{:.2}", n)),
+                            .suffix(format!("/{t_time_text}"))
+                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
                     );
 
                     ui.add_space(-resp.rect.width() - 8.);
@@ -500,47 +514,61 @@ impl Editor {
 
                     ui.add(
                         egui::Slider::new(&mut cursor, (0.)..=t_time)
-                            .suffix(format!("/{:.2}s", t_time))
-                            .trailing_fill(true)
-                            .custom_formatter(|n, _| format!("{:.2}", n)),
+                            .suffix(format!("/{t_time_text}"))
+                            .trailing_fill(self.simulation.sim_len() != 0.)
+                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
                     );
 
                     self.play_time = cursor;
-                    //self.frame_index = cursor.saturating_sub(1);
                 });
 
                 // play buttons
                 ui.horizontal(|ui| {
                     let tot_space = ui.available_width();
-                    let resp = ui.add_visible(false, egui::DragValue::new(&mut self.play_speed));
+                    let l_ui_p = ui.max_rect().left();
 
                     // 22.96875: buttons width (pre-measured/observed)
+                    let speed_space = tot_space / 2.
+                        - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
+                        + (22.96875 / 2. + 8. / 2.); // to have the play button on center
+
+                    const MIN_SPEED: f32 = 1e-10;
+                    const MAX_SPEED: f32 = 1e-1;
+
+                    ui.style_mut().spacing.item_spacing =
+                        Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
                     ui.add_space(
-                        tot_space / 2.
-                            - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
-                            + (22.96875 / 2. + 8. / 2.) // to have the play button on center
-                            - (2. * resp.rect.width() + 2. * 8.), // to make the speed button/s not affect others positions
+                        -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
                     );
-
-                    const MAX_SPEED: f32 = 10.24;
-                    const MIN_SPEED: f32 = 0.01;
-
-                    let drag_speed = if self.play_speed < 1. { 0.01 } else { 0.01 };
 
                     ui.add(
-                        egui::DragValue::new(&mut self.play_speed)
-                            .range(MIN_SPEED..=MAX_SPEED)
-                            .speed(drag_speed),
+                        egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
+                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s"))
+                            .logarithmic(true),
                     );
 
+                    ui.style_mut().spacing.item_spacing = Vec2::new(8., 0.);
+
                     if ui
-                        .add(egui::Button::image(egui::Image::new(egui::include_image!(
-                            "../icons/media-seek-backward.png"
-                        ))))
+                        .put(
+                            egui::Rect::from_min_max(
+                                Pos2 {
+                                    x: l_ui_p + speed_space,
+                                    y: ui.cursor().top(),
+                                },
+                                Pos2 {
+                                    x: l_ui_p + speed_space + 22.96875,
+                                    y: ui.cursor().bottom(),
+                                },
+                            ),
+                            egui::Button::image(egui::Image::new(egui::include_image!(
+                                "../icons/media-seek-backward.png"
+                            ))),
+                        )
                         .clicked()
                     {
                         self.play_time = (self.play_time - self.play_speed).max(0.);
-                    }
+                    };
 
                     if ui
                         .add(egui::Button::image(egui::Image::new(if self.auto_play {
@@ -560,11 +588,11 @@ impl Editor {
                         .clicked()
                     {
                         self.play_time =
-                            if self.play_time + self.play_speed < self.simulation.sim_len() {
-                                self.play_time + self.play_speed
+                            if self.play_time + self.play_speed > self.simulation.sim_len() {
+                                0.
                             } else {
-                                self.simulation.sim_len()
-                            }
+                                self.play_time + self.play_speed
+                            };
                     }
 
                     if ui
@@ -616,6 +644,52 @@ struct NumFormatter {
 }
 
 impl NumFormatter {
+    fn raw_string(&self, n: f32, unit: &'static str) -> String {
+        let sign = if n < 0. { "-" } else { " " };
+        match self.format {
+            NumFormat::Dashed => {
+                let decs = decimals_for_figures(n, self.figures);
+                format!("{sign}{:.*} {unit}", decs, n)
+            }
+            NumFormat::Scientific => {
+                let mut exp = n.log10();
+                if exp == f32::NEG_INFINITY {
+                    exp = 0.;
+                }
+                let exp = exp.floor() as i32;
+                let mantissa = n / 10_f32.powi(exp);
+                let text = format!("{sign}{:.*}·10", self.figures as usize - 1, mantissa);
+                format!("{text}^{} {unit}", exp)
+            }
+            NumFormat::Metric => {
+                const METRIC: &[(f32, &str)] = &[
+                    (1e9, "G"),
+                    (1e6, "M"),
+                    (1e3, "k"),
+                    (1.0, ""),
+                    (1e-3, "m"),
+                    (1e-6, "µ"),
+                    (1e-9, "n"),
+                    (1e-12, "p"),
+                    (1e-15, "f"),
+                ];
+
+                let mut metric = *METRIC.last().unwrap();
+                for &(divisor, suffix) in METRIC {
+                    let threshold = divisor;
+                    if n >= threshold {
+                        metric = (divisor, suffix);
+                        break;
+                    }
+                }
+
+                let scaled = n / metric.0;
+                let decs = decimals_for_figures(scaled, self.figures);
+                format!("{sign}{:.*} {}{unit}", decs, scaled, metric.1)
+            }
+        }
+    }
+
     fn fmt(&self, n: f32, unit: &'static str) -> WidgetText {
         let sign = if n < 0. { "-" } else { " " };
         let n = n.abs();

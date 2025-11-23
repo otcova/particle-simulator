@@ -17,11 +17,18 @@ impl TimeInterval {
         let diff = moment - self.start_time;
         let diff_step = diff / self.dt;
         let ind = diff_step.round() as usize;
-        self.frame_count.min(ind + self.first_frame_ind)
+        ind + self.first_frame_ind
     }
 
     pub fn duration(&self) -> f32 {
         self.frame_count as f32 * self.dt
+    }
+
+    fn to_string(&self) -> String {
+        format!(
+            "st_time:{}, f_frame:{}, dt:{}, f_cnt:{}",
+            self.start_time, self.first_frame_ind, self.dt, self.frame_count
+        )
     }
 }
 
@@ -48,7 +55,7 @@ impl Simulation {
         while let Some(frame) = backend.read() {
             self.timeline_ram += frame.bytes().len();
 
-            let f_dt = frame.metadata().dt;
+            let f_dt = frame.metadata().step_dt;
             let cur_time: f32;
 
             let t_i = self.times.last_mut();
@@ -100,7 +107,7 @@ impl Simulation {
 
     fn find_frame_ind(&self, moment: f32) -> Option<usize> {
         for t_i in self.times.iter().rev() {
-            if t_i.start_time < moment {
+            if t_i.start_time <= moment {
                 return Some(t_i.get_frame_ind(moment));
             }
         }
@@ -113,5 +120,25 @@ impl Simulation {
             Some(t_i) => t_i.start_time + t_i.duration(),
             None => 0.,
         }
+    }
+
+    pub fn print(&self, moment: f32) -> Vec<String> {
+        let mut res = Vec::new();
+        res.push(
+            self.times
+                .iter()
+                .map(|t| t.to_string() + " | ")
+                .collect::<String>(),
+        );
+        let ind = self.find_frame_ind(moment);
+
+        res.push(ind.unwrap_or(0xFFFFFF).to_string());
+        res.push(
+            (self.frames.len() - 1)
+                .min(ind.unwrap_or(0xFFFFFF))
+                .to_string(),
+        );
+
+        res
     }
 }

@@ -30,8 +30,13 @@ __global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32
     dst[i].vy = p.vy;
     dst[i].ty = p.ty;
 
-    if (dst[i].x > 1.) dst[i].x = 0.;
-    if (dst[i].y > 1.) dst[i].y = 0.;
+    if (dst[i].vx > 0.) {
+      if (dst[i].x > 1.) dst[i].x = 0.;
+    } else if (dst[i].x < 0.) dst[i].x = 1.;
+
+    if (dst[i].vy > 0.) {
+      if (dst[i].y > 1.) dst[i].y = 0.;
+    } else if (dst[i].y < 0.) dst[i].y = 1.;
 }
 
 static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
@@ -55,9 +60,9 @@ static void step(Particle* src, Particle* dst, float dt, uint32_t count) {
 }
 
 static void run_kernel_async(FrameHeader* frame, Particle* k_src, Particle* k_dst) {
-    const uint32_t steps = 1000 | 1;//frame->metadata.steps_per_frame | 1;
+    const uint32_t steps = frame->metadata.steps_per_frame | 1;
 
-    float dt = frame->metadata.dt / steps;
+    float dt = frame->metadata.step_dt / steps;
     uint32_t count = frame->particles_count;
 
     step(k_src, k_dst, dt, count);

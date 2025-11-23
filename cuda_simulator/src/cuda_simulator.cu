@@ -22,7 +22,6 @@ static void runtime(Particle* src, Particle* dst) {
     run_kernel_async(frame, src, dst);
 
     if (receive_from_frontend(frame)) {
-        frame_print(frame);
         write_gpu(frame, src);
         run_kernel_async(frame, src, dst);
         send_to_frontend(frame);
@@ -42,7 +41,7 @@ int main() {
     }
 
     frame_print(frame);
-    frame->metadata.dt = 0.100002;
+    //frame->metadata.step_dt = 0.100002;
     //frame->metadata.steps_per_frame = 100000;
 
     write_gpu(frame, k_0);
@@ -52,6 +51,11 @@ int main() {
     while (1) {
         runtime(k_1, k_0);
         runtime(k_0, k_1);
+        // to not have to wait 1000 years to see changes
+        //while (!receive_from_frontend(frame)) {
+        //    thrd_yield();
+        //}
+        //write_gpu(frame, k_1);
     }
 
     kernel_destroy();
