@@ -1,15 +1,16 @@
 use std::time::Instant;
 
 use crate::wgpu_utils::WgpuContext;
-use particle_io::{Frame, Particle};
+use particle_io::{Frame, FrameMetadata, Particle};
 use wgpu::{BindGroupLayoutEntry, hal::Rect, util::DeviceExt};
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Zeroable, bytemuck::NoUninit)]
 pub struct Uniform {
+    metadata: FrameMetadata,
     pub rtx: u32,
     time: f32,
-    radius: f32,
+    max_speed: f32,
 }
 
 pub struct Graphics {
@@ -153,7 +154,7 @@ impl Graphics {
 
         let uniform = Uniform {
             rtx: 1,
-            radius: 0.05,
+            max_speed: 1e6,
             ..Default::default()
         };
 
@@ -193,7 +194,7 @@ impl Graphics {
         rect: Rect<u32>,
     ) {
         self.update_particles(gpu, frame);
-        self.update_uniform(gpu);
+        self.update_uniform(gpu, frame);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -229,14 +230,16 @@ impl Graphics {
             // render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
             render_pass.set_vertex_buffer(0, self.particles_buffer.slice(..));
             render_pass.set_bind_group(0, &self.bind_group, &[]);
-            render_pass.draw(0..3, 0..frame.particles().len() as u32);
+            render_pass.draw(0..4, 0..frame.particles().len() as u32);
         }
     }
 
-    fn update_uniform(&mut self, gpu: &WgpuContext) {
+    fn update_uniform(&mut self, gpu: &WgpuContext, frame: &Frame) {
         self.uniform.time = self.start_instant.elapsed().as_secs_f32();
+        self.uniform.metadata = *frame.metadata();
 
         let bytes = bytemuck::bytes_of(&self.uniform);
+
         gpu.queue.write_buffer(&self.uniform_buffer, 0, bytes);
     }
 

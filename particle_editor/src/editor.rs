@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use egui::{
-    CentralPanel, Color32, ComboBox, DragValue, FontId, Grid, Key, KeyboardShortcut, Margin,
-    Modifiers, Pos2, RichText, ScrollArea, SidePanel, Slider, TextFormat, Vec2, WidgetText,
+    CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
+    Margin, Modifiers, Pos2, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
 };
 use particle_io::{Frame, FrameMetadata};
 use wgpu::hal::Rect;
@@ -14,7 +14,10 @@ use winit::{
 };
 
 use crate::{
-    backend::Backend, egui_utils::EguiContext, graphics::Graphics, simulation::Simulation,
+    backend::Backend,
+    egui_utils::{EguiContext, NumFormat, NumFormatter},
+    graphics::Graphics,
+    simulation::Simulation,
     wgpu_utils::WgpuContext,
 };
 
@@ -45,7 +48,7 @@ impl Editor {
     pub async fn new(window: Arc<Window>) -> Editor {
         let gpu = WgpuContext::new(window).await;
 
-        let mut editor = Editor {
+        let editor = Editor {
             egui: EguiContext::new(&gpu, None, 1),
             graphics: Graphics::new(&gpu),
             simulation: Simulation::new(),
@@ -59,7 +62,7 @@ impl Editor {
 
             num_formatter: NumFormatter {
                 figures: 3,
-                format: NumFormat::Scientific,
+                format: NumFormat::Metric,
                 rgb: [140, 140, 180],
             },
 
@@ -67,7 +70,7 @@ impl Editor {
 
             // play related
             play_time: 0.,
-            play_speed: 0.01,
+            play_speed: 100e-15,
             auto_play: false,
             loop_play: true,
         };
@@ -78,7 +81,6 @@ impl Editor {
             style.spacing.scroll.foreground_color = false;
         });
 
-        editor.backend.open_tcp();
         egui_extras::install_image_loaders(editor.egui.context());
         editor
     }
@@ -284,6 +286,10 @@ impl Editor {
             );
             ui.add_space(5.);
 
+            if ui.button("Connect to itself").clicked() {
+                editor.backend.open_itself();
+            }
+
             if ui.button("Connect by files").clicked() {
                 editor.backend.open_backend_files();
             }
@@ -301,29 +307,37 @@ impl Editor {
         });
 
         self.ui_section(ui, "Editor", |editor, ui| {
-            ui.collapsing("Load Square", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Size ");
-                    ui.add(Slider::new(&mut editor.box_size, 0..=20));
-                });
+            CollapsingHeader::new("Load Square")
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Size");
+                        ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                    });
 
-                ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
-                    if ui.button("Send To Backend").clicked() {
-                        let mut frame = Frame::new();
-                        *frame.metadata_mut() = editor.sim_params;
-                        frame.push_square(editor.box_size);
-                        editor.backend.write(&frame);
-                    }
+                    ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
+                        if ui.button("Send To Backend").clicked() {
+                            let mut frame = Frame::new();
+                            *frame.metadata_mut() = editor.sim_params;
+                            let size =
+                                f32::min(editor.sim_params.box_height, editor.sim_params.box_width);
+                            frame.push_square(size, editor.box_size);
+                            editor.backend.write(&frame);
+                        }
+                    });
                 });
-            });
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
-            Grid::new("params-grid").num_columns(2).show(ui, |ui| {
-                let mut params = editor.sim_params;
+            let mut params = editor.sim_params;
 
+            Grid::new("params-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Step delta time");
-                ui.add(Slider::new(&mut params.step_dt, 1e-10..=1e-1).logarithmic(true));
+                ui.add(
+                    Slider::new(&mut params.step_dt, 1e-15..=1e-1)
+                        .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "s"))
+                        .logarithmic(true),
+                );
                 ui.end_row();
 
                 ui.label("Steps per frame");
@@ -331,36 +345,88 @@ impl Editor {
                 ui.end_row();
 
                 ui.label("Frame delta time");
-                ui.label(editor.num(0.000123, "s"));
+                let frame_dt = params.step_dt * params.steps_per_frame as f32;
+                ui.label(editor.num(frame_dt, "s"));
                 ui.end_row();
 
                 ui.end_row();
 
-                ui.label("Box size");
-                ui.add(Slider::new(&mut editor.box_size, 0..=20));
+                let box_size_range = 1e-9..=1000e-9;
+                ui.label("Box width");
+                ui.add(
+                    Slider::new(&mut params.box_width, box_size_range.clone())
+                        .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
+                        .logarithmic(true),
+                );
+                ui.end_row();
+
+                ui.label("Box height");
+                ui.add(
+                    Slider::new(&mut params.box_height, box_size_range.clone())
+                        .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
+                        .logarithmic(true),
+                );
                 ui.end_row();
 
                 ui.label("Data structure");
+
+                let current_data_structure =
+                    particle_io::DataStructure::try_from(params.data_structure)
+                        .map(|d| d.name())
+                        .unwrap_or("Invalid option");
+
                 ComboBox::from_id_salt("Data structure")
-                    .selected_text("Compact Array")
+                    .selected_text(current_data_structure)
                     .show_ui(ui, |ui| {
-                        let mut v = 0;
-                        ui.selectable_value(&mut v, 0, "Compact Array");
-                        ui.selectable_value(&mut v, 1, "Matrix Buckets");
+                        let d = &mut params.data_structure;
+                        use particle_io::DataStructure::*;
+                        ui.selectable_value(d, CompactArray as u32, CompactArray.name());
+                        ui.selectable_value(d, MatrixBuckets as u32, MatrixBuckets.name());
                     });
                 ui.end_row();
-
-                if editor.sim_params != params {
-                    // Params changed => Send to backend
-                }
-                editor.sim_params = params;
             });
+            ui.add_space(20.);
+
+            for (idx, particle) in params.particles.iter_mut().enumerate() {
+                let name = format!("Particle {}", idx);
+                ui.collapsing(&name, |ui| {
+                    Grid::new(&name).num_columns(2).show(ui, |ui| {
+                        ui.label("σ");
+                        ui.add(
+                            Slider::new(&mut particle.sigma, 1e-10..=10e-10)
+                                .custom_formatter(|t, _| {
+                                    editor.num_formatter.raw_string(t as f32, "m")
+                                })
+                                .logarithmic(true),
+                        );
+                        ui.end_row();
+
+                        ui.label("Ɛ");
+                        ui.add(Slider::new(&mut particle.epsilon, (1.)..=200.).logarithmic(true));
+                        ui.end_row();
+
+                        ui.label("n");
+                        ui.add(Slider::new(&mut particle.n, (8.)..=16.));
+                        ui.end_row();
+
+                        ui.label("m");
+                        ui.add(Slider::new(&mut particle.m, (3.)..=9.));
+                        ui.end_row();
+                    });
+                });
+                ui.end_row();
+            }
+
+            if editor.sim_params != params {
+                // Maybe: Params changed => Send to backend
+            }
+            editor.sim_params = params;
         });
 
         self.ui_section(ui, "Stats", |editor, ui| {
             Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Time");
-                ui.label(editor.num(12.21311e-6, "s"));
+                ui.label(editor.num(editor.play_time, "s"));
                 ui.end_row();
 
                 ui.label("Step delta time");
@@ -368,7 +434,9 @@ impl Editor {
                 ui.end_row();
 
                 ui.label("Num Particles");
-                ui.label(editor.num(100., ""));
+                let frame = editor.simulation.frame(editor.play_time);
+                let particles_count = frame.particles().len();
+                ui.label(editor.num(particles_count as f32, ""));
                 ui.end_row();
 
                 ui.end_row();
@@ -405,7 +473,10 @@ impl Editor {
                 ui.label("Timeline RAM");
                 let ram = editor.simulation.timeline_ram();
                 if ram < 1000 {
-                    ui.label(format!("{} B", ram));
+                    let mut f = editor.num_formatter;
+                    f.format = NumFormat::Metric;
+                    f.figures = 0;
+                    ui.label(f.fmt(ram as f32, "B"));
                 } else {
                     let mut f = editor.num_formatter;
                     f.figures = 3;
@@ -532,8 +603,8 @@ impl Editor {
                         - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
                         + (22.96875 / 2. + 8. / 2.); // to have the play button on center
 
-                    const MIN_SPEED: f32 = 1e-10;
-                    const MAX_SPEED: f32 = 1e-1;
+                    const MIN_SPEED: f32 = 1e-15;
+                    const MAX_SPEED: f32 = 1.0;
 
                     ui.style_mut().spacing.item_spacing =
                         Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
@@ -617,173 +688,4 @@ impl Editor {
             content(ui);
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NumFormat {
-    Dashed,
-    Scientific,
-    Metric,
-}
-
-impl NumFormat {
-    const fn name(self) -> &'static str {
-        match self {
-            NumFormat::Dashed => "Dashed",
-            NumFormat::Scientific => "Scientific",
-            NumFormat::Metric => "Metric",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct NumFormatter {
-    format: NumFormat,
-    figures: u32,
-    rgb: [u8; 3],
-}
-
-impl NumFormatter {
-    fn raw_string(&self, n: f32, unit: &'static str) -> String {
-        let sign = if n < 0. { "-" } else { " " };
-        match self.format {
-            NumFormat::Dashed => {
-                let decs = decimals_for_figures(n, self.figures);
-                format!("{sign}{:.*} {unit}", decs, n)
-            }
-            NumFormat::Scientific => {
-                let mut exp = n.log10();
-                if exp == f32::NEG_INFINITY {
-                    exp = 0.;
-                }
-                let exp = exp.floor() as i32;
-                let mantissa = n / 10_f32.powi(exp);
-                let text = format!("{sign}{:.*}·10", self.figures as usize - 1, mantissa);
-                format!("{text}^{} {unit}", exp)
-            }
-            NumFormat::Metric => {
-                const METRIC: &[(f32, &str)] = &[
-                    (1e9, "G"),
-                    (1e6, "M"),
-                    (1e3, "k"),
-                    (1.0, ""),
-                    (1e-3, "m"),
-                    (1e-6, "µ"),
-                    (1e-9, "n"),
-                    (1e-12, "p"),
-                    (1e-15, "f"),
-                ];
-
-                let mut metric = *METRIC.last().unwrap();
-                for &(divisor, suffix) in METRIC {
-                    let threshold = divisor;
-                    if n >= threshold {
-                        metric = (divisor, suffix);
-                        break;
-                    }
-                }
-
-                let scaled = n / metric.0;
-                let decs = decimals_for_figures(scaled, self.figures);
-                format!("{sign}{:.*} {}{unit}", decs, scaled, metric.1)
-            }
-        }
-    }
-
-    fn fmt(&self, n: f32, unit: &'static str) -> WidgetText {
-        let sign = if n < 0. { "-" } else { " " };
-        let n = n.abs();
-
-        let figs = self.figures as usize;
-        let color = Color32::from_rgb(self.rgb[0], self.rgb[1], self.rgb[2]);
-        let font_id = FontId::monospace(12.);
-        let exp_font = FontId::monospace(10.);
-
-        match self.format {
-            NumFormat::Dashed => {
-                let decs = decimals_for_figures(n, self.figures);
-                RichText::new(format!("{sign}{:.*} {unit}", decs, n))
-                    .color(color)
-                    .font(font_id)
-                    .into()
-            }
-            NumFormat::Scientific => {
-                let mut exp = n.log10();
-                if exp == f32::NEG_INFINITY {
-                    exp = 0.;
-                }
-                let exp = exp.floor() as i32;
-                let mantissa = n / 10_f32.powi(exp);
-
-                let mut text = egui::text::LayoutJob::default();
-                text.append(
-                    &format!("{sign}{:.*}·10", figs - 1, mantissa),
-                    0.,
-                    TextFormat {
-                        color,
-                        font_id: font_id.clone(),
-                        ..Default::default()
-                    },
-                );
-                text.append(
-                    &format!("{} ", exp),
-                    0.,
-                    TextFormat {
-                        color,
-                        valign: egui::Align::TOP,
-                        font_id: exp_font,
-                        ..Default::default()
-                    },
-                );
-                text.append(
-                    unit,
-                    0.,
-                    TextFormat {
-                        color,
-                        font_id,
-                        ..Default::default()
-                    },
-                );
-                text.into()
-            }
-            NumFormat::Metric => {
-                const METRIC: &[(f32, &str)] = &[
-                    (1e9, "G"),
-                    (1e6, "M"),
-                    (1e3, "k"),
-                    (1.0, ""),
-                    (1e-3, "m"),
-                    (1e-6, "µ"),
-                    (1e-9, "n"),
-                    (1e-12, "p"),
-                    (1e-15, "f"),
-                ];
-
-                let mut metric = *METRIC.last().unwrap();
-                for &(divisor, suffix) in METRIC {
-                    let threshold = divisor;
-                    if n >= threshold {
-                        metric = (divisor, suffix);
-                        break;
-                    }
-                }
-
-                let scaled = n / metric.0;
-                let decs = decimals_for_figures(scaled, self.figures);
-                RichText::new(format!("{sign}{:.*} {}{unit}", decs, scaled, metric.1))
-                    .color(color)
-                    .font(font_id)
-                    .into()
-            }
-        }
-    }
-}
-
-fn decimals_for_figures(n: f32, sign_figures: u32) -> usize {
-    let exp10 = n.abs().log10();
-    if exp10 == f32::NEG_INFINITY {
-        return 0;
-    }
-    let digits = exp10.floor() as isize + 1;
-    (sign_figures as isize - digits).max(0) as usize
 }

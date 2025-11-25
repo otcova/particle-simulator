@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::backend::Backend;
 use particle_io::Frame;
 
@@ -23,9 +25,12 @@ impl TimeInterval {
     pub fn duration(&self) -> f32 {
         self.frame_count as f32 * self.dt
     }
+}
 
-    fn to_string(&self) -> String {
-        format!(
+impl Debug for TimeInterval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
             "st_time:{}, f_frame:{}, dt:{}, f_cnt:{}",
             self.start_time, self.first_frame_ind, self.dt, self.frame_count
         )
@@ -56,6 +61,7 @@ impl Simulation {
             self.timeline_ram += frame.bytes().len();
 
             let f_dt = frame.metadata().step_dt;
+            #[allow(clippy::needless_late_init)]
             let cur_time: f32;
 
             let t_i = self.times.last_mut();
@@ -87,18 +93,15 @@ impl Simulation {
         self.timeline_ram = 0;
     }
 
-    /*pub fn timeline_frames_count(&mut self) -> u32 {
-        self.frames.len() as u32
-    }*/
-
     pub fn frame(&mut self, moment: f32) -> &Frame {
+        #[allow(clippy::collapsible_if)]
         if !self.frames.is_empty() {
             if let Some(idx) = self.find_frame_ind(moment) {
                 let max_idx = self.frames.len() - 1;
-                return &self.frames[max_idx.min(idx as usize)];
+                return &self.frames[max_idx.min(idx)];
             }
         }
-        return &self.default_frame;
+        &self.default_frame
     }
 
     pub fn timeline_ram(&self) -> usize {
@@ -127,7 +130,7 @@ impl Simulation {
         res.push(
             self.times
                 .iter()
-                .map(|t| t.to_string() + " | ")
+                .map(|t| format!("{:?} | ", t))
                 .collect::<String>(),
         );
         let ind = self.find_frame_ind(moment);

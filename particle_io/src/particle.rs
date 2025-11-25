@@ -1,7 +1,8 @@
 use std::fmt::Display;
 
 use bytemuck::{
-    Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
+    NoUninit, Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut,
+    from_bytes,
 };
 
 #[repr(C)]
@@ -21,17 +22,92 @@ impl Particle {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default)]
-pub struct FrameMetadata {
-    pub step_dt: f32,
-    pub steps_per_frame: u32,
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default, Debug)]
+pub struct MiePotentialParams {
+    // Distance (meters) at which V = 0
+    pub sigma: f32,
+    // Dispersion energy (J)
+    pub epsilon: f32,
+    pub n: f32,
+    pub m: f32,
 }
 
-#[derive(Clone, PartialEq)]
+#[repr(u32)]
+#[derive(Clone, Copy, Zeroable, NoUninit, PartialEq, Debug)]
+pub enum DataStructure {
+    CompactArray,
+    MatrixBuckets,
+}
+
+impl DataStructure {
+    pub fn name(self) -> &'static str {
+        match self {
+            DataStructure::CompactArray => "Compact Array",
+            DataStructure::MatrixBuckets => "Matrix Buckets",
+        }
+    }
+}
+
+impl TryFrom<u32> for DataStructure {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        use DataStructure::*;
+        match value {
+            x if x == CompactArray as u32 => Ok(CompactArray),
+            x if x == MatrixBuckets as u32 => Ok(MatrixBuckets),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug)]
+pub struct FrameMetadata {
+    pub particles: [MiePotentialParams; 2],
+    pub step_dt: f32,
+    pub steps_per_frame: u32,
+
+    pub box_width: f32,
+    pub box_height: f32,
+
+    pub data_structure: u32,
+    pub _padding: [u32; 3],
+}
+
+impl Default for FrameMetadata {
+    fn default() -> FrameMetadata {
+        FrameMetadata {
+            step_dt: 100e-15,
+            steps_per_frame: 10_000,
+            box_width: 100e-9,
+            box_height: 100e-9,
+            data_structure: DataStructure::MatrixBuckets as u32,
+            particles: [
+                MiePotentialParams {
+                    // Nitrogen
+                    sigma: 3.609e-10,
+                    epsilon: 105.79, // TODO: units
+                    n: 14.08,
+                    m: 6.,
+                },
+                MiePotentialParams {
+                    // Argon
+                    sigma: 3.404e-10,
+                    epsilon: 117.84, // TODO: units
+                    n: 12.085,
+                    m: 6.,
+                },
+            ],
+            _padding: [0; _],
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct Frame(Vec<u8>);
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default)]
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default, Debug)]
 pub struct FrameHeader {
     signature_start: [u8; 4],
     pub particles_count: u32,
@@ -91,10 +167,15 @@ impl Display for Frame {
         let FrameMetadata {
             step_dt,
             steps_per_frame,
+            box_width,
+            box_height,
+            ..
         } = *self.metadata();
+        writeln!(f, "  particle_count = {}", self.particles().len())?;
         writeln!(f, "  step dt = {}", step_dt)?;
         writeln!(f, "  steps per frame = {}", steps_per_frame)?;
-        writeln!(f, "  particle_count = {}", self.particles().len())?;
+        writeln!(f, "  box size = ({}, {})", box_width, box_height)?;
+        writeln!(f, "  ...")?;
         for (i, p) in self.particles().iter().enumerate().take(5) {
             writeln!(
                 f,
@@ -212,11 +293,11 @@ impl Frame {
         self.0.reserve(size_of::<Particle>() * additional as usize);
     }
 
-    pub fn push_square(&mut self, size: u32) {
-        self.reserve(size * size);
+    pub fn push_square(&mut self, size: f32, particles: u32) {
+        self.reserve(particles * particles);
 
-        for idx_x in 0..size {
-            for idx_y in 0..size {
+        for idx_x in 0..particles {
+            for idx_y in 0..particles {
                 let a = (idx_x + 509186523).wrapping_mul(3644126341);
                 let b = (idx_y + 153252321).wrapping_mul(4235235234);
                 let c = (idx_x + 621876523).wrapping_mul(4124124122);
@@ -228,15 +309,15 @@ impl Frame {
                 let mut x = 0.5;
                 let mut y = 0.5;
 
-                if size > 1 {
+                if particles > 1 {
                     // Coordinates from 0 to 1 (inclusive)
-                    x = idx_x as f32 / (size - 1) as f32;
-                    y = idx_y as f32 / (size - 1) as f32;
+                    x = idx_x as f32 / (particles - 1) as f32;
+                    y = idx_y as f32 / (particles - 1) as f32;
                 }
 
                 self.push(Particle {
-                    x: (x + 0.5) * 0.5,
-                    y: (y + 0.5) * 0.5,
+                    x: (x + 0.5) * 0.5 * size,
+                    y: (y + 0.5) * 0.5 * size,
                     vx: (vx - 0.5) * 1000000.,
                     vy: (vy - 0.5) * 1000000.,
                     ty: 1,

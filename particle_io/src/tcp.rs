@@ -21,8 +21,16 @@ impl std::io::Read for TcpReader {
         loop {
             if let Some(stream) = &mut self.connection {
                 match stream.read(buf) {
-                    Ok(n) => return Ok(n),
-                    Err(error) if error.kind() == ErrorKind::Interrupted => return Err(error),
+                    Ok(0) => {
+                        self.connection = None;
+                    }
+                    Ok(n) => {
+                        return Ok(n);
+                    }
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {
+                        eprintln!("{}", error);
+                        return Err(error);
+                    }
                     Err(error) => {
                         eprintln!("{}", error);
                         self.connection = None;
@@ -30,7 +38,7 @@ impl std::io::Read for TcpReader {
                 }
             }
 
-            for _ in 0..100 {
+            for _ in 0..4 {
                 match self.listener.accept() {
                     Ok((stream, addr)) => {
                         println!("Client: {}", addr);
@@ -76,6 +84,37 @@ impl std::io::Write for TcpWriter {
     }
 }
 
+struct TcpClient(TcpStream);
+
+impl std::io::Read for TcpClient {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        self.0.read_exact(buf)
+    }
+}
+
+impl std::io::Write for TcpClient {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.0.write_all(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for TcpClient {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown(std::net::Shutdown::Both);
+        println!("Shutdown");
+    }
+}
+
 pub fn new_tcp_server<A: ToSocketAddrs>(addr: A) -> Result<(Reader, Writer), String> {
     let listener = TcpListener::bind(addr).map_err(|e| e.to_string())?;
     let (tx, rx) = mpsc::channel();
@@ -95,5 +134,5 @@ pub fn new_tcp_server<A: ToSocketAddrs>(addr: A) -> Result<(Reader, Writer), Str
 pub fn new_tcp_client<A: ToSocketAddrs>(addr: A) -> Result<(Reader, Writer), String> {
     let client = TcpStream::connect(addr).map_err(|e| e.to_string())?;
     let client2 = client.try_clone().map_err(|e| e.to_string())?;
-    Ok((Reader::new(client), Writer::new(client2)))
+    Ok((Reader::new(client), Writer::new(TcpClient(client2))))
 }

@@ -1,3 +1,4 @@
+use crate::wgpu_utils::WgpuContext;
 use egui::Context;
 use egui_wgpu::wgpu::{CommandEncoder, StoreOp, TextureFormat};
 use egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor, wgpu};
@@ -5,7 +6,8 @@ use egui_winit::State;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-use crate::wgpu_utils::WgpuContext;
+mod number_formatter;
+pub use number_formatter::*;
 
 pub struct EguiContext {
     state: State,

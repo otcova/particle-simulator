@@ -1,3 +1,5 @@
+use std::io::pipe;
+
 use particle_io::{Frame, Reader, Writer};
 
 #[derive(Default)]
@@ -18,7 +20,7 @@ pub enum ConnectionState {
 impl Backend {
     pub fn new() -> Backend {
         let mut backend = Backend::default();
-        backend.open_backend_files();
+        backend.open_itself();
         backend
     }
 
@@ -34,17 +36,6 @@ impl Backend {
         let read_path = "./backend_out.bin".into();
         let write_path = "./backend_in.bin".into();
 
-        match Reader::open_file(&read_path) {
-            Ok(reader) => {
-                self.reader = Some(reader);
-                self.reader_details = read_path;
-            }
-            Err(error) => {
-                self.reader = None;
-                self.reader_details = error;
-            }
-        }
-
         match Writer::open_file(&write_path) {
             Ok(writer) => {
                 self.writer = Some(writer);
@@ -53,6 +44,17 @@ impl Backend {
             Err(error) => {
                 self.writer = None;
                 self.writer_details = error;
+            }
+        }
+
+        match Reader::open_file(&read_path) {
+            Ok(reader) => {
+                self.reader = Some(reader);
+                self.reader_details = read_path;
+            }
+            Err(error) => {
+                self.reader = None;
+                self.reader_details = error;
             }
         }
     }
@@ -72,6 +74,23 @@ impl Backend {
                 self.writer = None;
                 self.reader_details = error.clone();
                 self.writer_details = error;
+            }
+        }
+    }
+
+    pub fn open_itself(&mut self) {
+        match pipe() {
+            Ok((rx, tx)) => {
+                self.reader = Some(Reader::new(rx));
+                self.writer = Some(Writer::new(tx));
+                self.reader_details = "Receiving from itself".into();
+                self.writer_details = "Sending to itself".into();
+            }
+            Err(error) => {
+                self.reader = None;
+                self.writer = None;
+                self.reader_details = error.to_string();
+                self.writer_details = error.to_string();
             }
         }
     }

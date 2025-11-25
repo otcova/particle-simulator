@@ -19,9 +19,9 @@ mod tests {
         let mut frame2 = Frame::new();
         let mut frame3 = Frame::new();
 
-        frame1.push_square(5);
-        frame2.push_square(21);
-        frame3.push_square(2);
+        frame1.push_square(1., 5);
+        frame2.push_square(1., 21);
+        frame3.push_square(1., 2);
 
         let mut raw_data = Vec::new();
         raw_data.extend_from_slice(frame1.bytes());
@@ -55,9 +55,9 @@ mod tests {
         let mut frame2 = Frame::new();
         let mut frame3 = Frame::new();
 
-        frame1.push_square(5);
-        frame2.push_square(21);
-        frame3.push_square(2);
+        frame1.push_square(1., 5);
+        frame2.push_square(1., 21);
+        frame3.push_square(1., 2);
 
         let mut raw_data = Vec::new();
         raw_data.extend_from_slice(frame1.bytes());
@@ -82,9 +82,9 @@ mod tests {
         // Give time for the reader thread to start up
         std::thread::sleep(Duration::from_millis(100));
 
-        assert!(server_rx.read() == Ok(Some(frame1)));
-        assert!(server_rx.read() == Ok(Some(frame2)));
-        assert!(server_rx.read() == Ok(Some(frame3)));
-        assert!(server_rx.read() == Ok(None));
+        assert_eq!(server_rx.read(), Ok(Some(frame1)));
+        assert_eq!(server_rx.read(), Ok(Some(frame2)));
+        assert_eq!(server_rx.read(), Ok(Some(frame3)));
+        assert_eq!(server_rx.read(), Ok(None));
     }
 }

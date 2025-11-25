@@ -2,3 +2,4 @@ CompileFlags:
   Add:
     - "-xc"
     - "-I../../particle_io/c_api/include/"
+    - "-I/usr/local/cuda/include"
