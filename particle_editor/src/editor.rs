@@ -67,7 +67,9 @@ impl Editor {
                 rgb: [140, 140, 180],
             },
 
-            sim_params: FrameMetadata::default(),
+            sim_params: FrameMetadata {
+                ..Default::default()
+            },
 
             // play related
             play_time: 0.,
