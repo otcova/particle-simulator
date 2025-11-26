@@ -41,6 +41,8 @@ struct Uniform {
     frame_time: f32,
     sim_time: f32,
     max_speed: f32,
+    pixel_size: f32,
+    min_particle_size: f32,
 }
 
 @group(0) @binding(0)
@@ -67,14 +69,23 @@ fn vertex_shader(
     }
 
     let box_size = vec2(udata.metadata.box_width, udata.metadata.box_height);
-    var particle_size = udata.metadata.particles[0].sigma;
+    var particle_size = vec2(udata.metadata.particles[0].sigma);
 
     if particle.ty <= 2u {
-        particle_size = udata.metadata.particles[particle.ty - 1u].sigma;
+        particle_size = vec2(udata.metadata.particles[particle.ty - 1u].sigma);
     }
 
     // Force a minimum particle size
-    particle_size = max(particle_size, min(box_size.x, box_size.y) / 100.);
+    let min_size = vec2(udata.pixel_size * udata.min_particle_size);//box_size / 200.;
+    if box_size.x > box_size.y {
+        if particle_size.x < min_size.x {
+            particle_size *= min_size.x / particle_size.x;
+        }
+    } else {
+        if particle_size.y < min_size.y {
+            particle_size *= min_size.y / particle_size.y;
+        }
+    }
 
     let quad_vertex = quad_verticies[vertex_index];
     let relative_speed = length(particle.vel) / udata.max_speed;
@@ -85,15 +96,13 @@ fn vertex_shader(
     out.color = mix(vec3f(0.0, 0.2, 1.), vec3f(1., 0.2, 0.0), relative_speed);
     out.tex_coord = quad_vertex * 2.;
     out.instance_index = instance_index;
+
     return out;
 }
 
 @fragment
 fn fragment_shader(in: VertexOutput) -> @location(0) vec4f {
     let r = length(in.tex_coord);
-    if r > 1. {
-        discard;
-    }
 
     var color: vec4f;
 

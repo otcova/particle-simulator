@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use egui::{
     CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
-    Margin, Modifiers, Pos2, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
+    Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
 };
 use particle_io::{Frame, FrameMetadata};
-use wgpu::hal::Rect;
 use winit::{
     dpi::PhysicalSize,
     event::WindowEvent,
@@ -15,7 +14,7 @@ use winit::{
 
 use crate::{
     backend::Backend,
-    egui_utils::{EguiContext, NumFormat, NumFormatter},
+    egui_utils::{EguiContext, NumFormat, NumFormatter, rect_from_pixels},
     graphics::Graphics,
     simulation::{Simulation, TimelineFrame},
     wgpu_utils::WgpuContext,
@@ -171,47 +170,74 @@ impl Editor {
 
         CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
-                let rect_points = ui.available_rect_before_wrap();
-
-                let mut rect = egui::Rect::from_min_max(
-                    rect_points.min * ui.pixels_per_point(),
-                    rect_points.max * ui.pixels_per_point(),
-                );
-
-                rect.max = rect.max.min(egui::Pos2 {
-                    x: (self.gpu.surface_size.width - 1) as f32,
-                    y: (self.gpu.surface_size.height - 1) as f32,
-                });
-
-                let canvas_rect = self.graphics.canvas_size(Rect {
-                    x: rect.min.x as u32,
-                    y: rect.min.y as u32,
-                    w: rect.size().x as u32,
-                    h: rect.size().y as u32,
-                });
-
-                let TimelineFrame {
-                    frame, frame_time, ..
-                } = self.simulation.frame(self.play_time);
-
-                match self.interpolation {
-                    Interpolation::None => {
-                        self.graphics.uniform.simulation_time = frame_time;
-                    }
-                    Interpolation::Velocity => {
-                        self.graphics.uniform.simulation_time = self.play_time;
-                    }
-                }
-                self.graphics.uniform.frame_time = frame_time;
-
-                self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
-
-                // let fill = ui.style().visuals.panel_fill;
-                // ui.painter().rect_filled(_, 0, fill);
-            });
+            .show(ctx, |ui| self.draw_canvas(ui, encoder));
 
         ctx.input_mut(|i| self.keyboard_shortcuts(i));
+    }
+
+    fn draw_canvas(&mut self, ui: &egui::Ui, encoder: &mut wgpu::CommandEncoder) {
+        let rect_points = ui.available_rect_before_wrap();
+
+        let mut rect = Rect::from_min_max(
+            rect_points.min * ui.pixels_per_point(),
+            rect_points.max * ui.pixels_per_point(),
+        );
+
+        rect.max = rect.max.min(egui::Pos2 {
+            x: (self.gpu.surface_size.width - 1) as f32,
+            y: (self.gpu.surface_size.height - 1) as f32,
+        });
+
+        let TimelineFrame {
+            frame, frame_time, ..
+        } = self.simulation.frame(self.play_time);
+
+        let canvas_rect = self.graphics.canvas_size(
+            frame.metadata(),
+            wgpu::hal::Rect {
+                x: rect.min.x as u32,
+                y: rect.min.y as u32,
+                w: rect.size().x as u32,
+                h: rect.size().y as u32,
+            },
+        );
+
+        let outter = rect_points;
+        let inner = rect_from_pixels(ui, canvas_rect.clone());
+
+        match self.interpolation {
+            Interpolation::None => {
+                self.graphics.uniform.simulation_time = frame_time;
+            }
+            Interpolation::Velocity => {
+                self.graphics.uniform.simulation_time = self.play_time;
+            }
+        }
+        self.graphics.uniform.frame_time = frame_time;
+
+        self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
+
+        let fill = Color32::from_black_alpha(100);
+        ui.painter().rect_filled(
+            Rect::from_min_max(outter.min, Pos2::new(inner.min.x, inner.max.y)),
+            0,
+            fill,
+        );
+        ui.painter().rect_filled(
+            Rect::from_min_max(outter.min, Pos2::new(inner.max.x, inner.min.y)),
+            0,
+            fill,
+        );
+        ui.painter().rect_filled(
+            Rect::from_min_max(Pos2::new(inner.min.x, inner.max.y), outter.max),
+            0,
+            fill,
+        );
+        ui.painter().rect_filled(
+            Rect::from_min_max(Pos2::new(inner.max.x, inner.min.y), outter.max),
+            0,
+            fill,
+        );
     }
 
     fn keyboard_shortcuts(&mut self, input: &mut egui::InputState) {
@@ -332,9 +358,13 @@ impl Editor {
                         if ui.button("Send To Backend").clicked() {
                             let mut frame = Frame::new();
                             *frame.metadata_mut() = editor.sim_params;
+                            let pos = (
+                                editor.sim_params.box_width / 2.,
+                                editor.sim_params.box_height / 2.,
+                            );
                             let size =
-                                f32::min(editor.sim_params.box_height, editor.sim_params.box_width);
-                            frame.push_square(size, editor.box_size);
+                                f32::min(editor.sim_params.box_width, editor.sim_params.box_height);
+                            frame.push_square(pos, size, editor.box_size);
                             editor.backend.write(&frame);
                         }
                     });
@@ -455,7 +485,7 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(editor.num(frame_time, "s"));
                     ui.label("/");
-                    ui.label(editor.num_int(total_sim_time, ""));
+                    ui.label(editor.num_int(total_sim_time, "s"));
                 });
                 ui.end_row();
 
@@ -519,7 +549,7 @@ impl Editor {
 
         self.ui_section(ui, "GUI", |editor, ui| {
             Grid::new("window-grid").num_columns(2).show(ui, |ui| {
-                ui.label("GUI size ");
+                ui.label("GUI size");
                 ui.add(
                     DragValue::new(&mut editor.ui_scale)
                         .range(0.5..=3.0)
@@ -528,7 +558,7 @@ impl Editor {
                 );
                 ui.end_row();
 
-                ui.label("Number Format ");
+                ui.label("Number Format");
                 ComboBox::from_id_salt("Number Format")
                     .selected_text(editor.num_formatter.format.name())
                     .show_ui(ui, |ui| {
@@ -550,6 +580,17 @@ impl Editor {
 
                 ui.label("Number Color");
                 ui.color_edit_button_srgb(&mut editor.num_formatter.rgb);
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Min particle size");
+                ui.add(
+                    DragValue::new(&mut editor.graphics.uniform.min_particle_size)
+                        .range(1.0..=40.0)
+                        .speed(0.2)
+                        .suffix("px"),
+                );
                 ui.end_row();
 
                 let rtx_names = ["Off", "Ultra", "RGB"];

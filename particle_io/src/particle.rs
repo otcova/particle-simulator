@@ -293,7 +293,7 @@ impl Frame {
         self.0.reserve(size_of::<Particle>() * additional as usize);
     }
 
-    pub fn push_square(&mut self, size: f32, particles: u32) {
+    pub fn push_square(&mut self, pos: (f32, f32), size: f32, particles: u32) {
         self.reserve(particles * particles);
 
         for idx_x in 0..particles {
@@ -316,10 +316,10 @@ impl Frame {
                 }
 
                 self.push(Particle {
-                    x: (x + 0.5) * 0.5 * size,
-                    y: (y + 0.5) * 0.5 * size,
-                    vx: (vx - 0.5) * 1000000.,
-                    vy: (vy - 0.5) * 1000000.,
+                    x: pos.0 + (x - 0.5) * 0.5 * size,
+                    y: pos.1 + (y - 0.5) * 0.5 * size,
+                    vx: (vx - 0.5) * 100000.,
+                    vy: (vy - 0.5) * 100000.,
                     ty: 1,
                 });
             }

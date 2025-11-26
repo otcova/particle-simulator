@@ -19,9 +19,10 @@ mod tests {
         let mut frame2 = Frame::new();
         let mut frame3 = Frame::new();
 
-        frame1.push_square(1., 5);
-        frame2.push_square(1., 21);
-        frame3.push_square(1., 2);
+        let pos = (0.5, 0.5);
+        frame1.push_square(pos, 1., 5);
+        frame2.push_square(pos, 1., 21);
+        frame3.push_square(pos, 1., 2);
 
         let mut raw_data = Vec::new();
         raw_data.extend_from_slice(frame1.bytes());
@@ -55,9 +56,10 @@ mod tests {
         let mut frame2 = Frame::new();
         let mut frame3 = Frame::new();
 
-        frame1.push_square(1., 5);
-        frame2.push_square(1., 21);
-        frame3.push_square(1., 2);
+        let pos = (0.5, 0.5);
+        frame1.push_square(pos, 1., 5);
+        frame2.push_square(pos, 1., 21);
+        frame3.push_square(pos, 1., 2);
 
         let mut raw_data = Vec::new();
         raw_data.extend_from_slice(frame1.bytes());

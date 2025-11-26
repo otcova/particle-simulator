@@ -13,6 +13,8 @@ pub struct Uniform {
     pub frame_time: f32,
     pub simulation_time: f32,
     pub max_speed: f32,
+    pixel_size: f32,
+    pub min_particle_size: f32,
 }
 
 pub struct Graphics {
@@ -156,7 +158,8 @@ impl Graphics {
 
         let uniform = Uniform {
             rtx: 1,
-            max_speed: 1e6,
+            max_speed: 1e5,
+            min_particle_size: 5.,
             ..Default::default()
         };
 
@@ -173,9 +176,13 @@ impl Graphics {
         }
     }
 
-    pub fn canvas_size(&mut self, mut rect: Rect<u32>) -> Rect<u32> {
-        let ratio = 1.; // w / h
-        if rect.w > rect.h {
+    pub fn canvas_size(
+        &mut self,
+        metadata: &FrameMetadata,
+        mut rect: wgpu::hal::Rect<u32>,
+    ) -> wgpu::hal::Rect<u32> {
+        let ratio = metadata.box_width / metadata.box_height; // w / h
+        if rect.w as f32 > rect.h as f32 * ratio {
             let new_w = (rect.h as f32 * ratio) as u32;
             rect.x += (rect.w - new_w) / 2;
             rect.w = new_w;
@@ -196,7 +203,7 @@ impl Graphics {
         rect: Rect<u32>,
     ) {
         self.update_particles(gpu, frame);
-        self.update_uniform(gpu, frame);
+        self.update_uniform(gpu, frame, rect.clone());
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -236,7 +243,8 @@ impl Graphics {
         }
     }
 
-    fn update_uniform(&mut self, gpu: &WgpuContext, frame: &Frame) {
+    fn update_uniform(&mut self, gpu: &WgpuContext, frame: &Frame, rect: Rect<u32>) {
+        self.uniform.pixel_size = frame.metadata().box_width / rect.w as f32;
         self.uniform.real_time = self.start_instant.elapsed().as_secs_f32();
         self.uniform.metadata = *frame.metadata();
 

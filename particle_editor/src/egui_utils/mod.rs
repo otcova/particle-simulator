@@ -121,3 +121,11 @@ impl EguiContext {
         self.ui_scale = scale;
     }
 }
+
+pub fn rect_from_pixels(ui: &egui::Ui, rect: wgpu::hal::Rect<u32>) -> egui::Rect {
+    let scale = ui.pixels_per_point();
+    egui::Rect::from_min_size(
+        egui::Pos2::new(rect.x as f32, rect.y as f32) / scale,
+        egui::Vec2::new(rect.w as f32, rect.h as f32) / scale,
+    )
+}
