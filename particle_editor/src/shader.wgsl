@@ -37,7 +37,9 @@ struct FrameMetadata {
 struct Uniform {
     metadata: FrameMetadata,
     rtx: u32,
-    time: f32,
+    real_time: f32,
+    frame_time: f32,
+    sim_time: f32,
     max_speed: f32,
 }
 
@@ -64,9 +66,8 @@ fn vertex_shader(
         return out;
     }
 
-    let quad_vertex = quad_verticies[vertex_index];
-    var particle_size = udata.metadata.particles[0].sigma;
     let box_size = vec2(udata.metadata.box_width, udata.metadata.box_height);
+    var particle_size = udata.metadata.particles[0].sigma;
 
     if particle.ty <= 2u {
         particle_size = udata.metadata.particles[particle.ty - 1u].sigma;
@@ -75,11 +76,10 @@ fn vertex_shader(
     // Force a minimum particle size
     particle_size = max(particle_size, min(box_size.x, box_size.y) / 100.);
 
+    let quad_vertex = quad_verticies[vertex_index];
     let relative_speed = length(particle.vel) / udata.max_speed;
-
-    let pos = particle.pos;
+    var pos = particle.pos + particle.vel * (udata.sim_time - udata.frame_time);
     let vertex = quad_vertex * particle_size;
-
 
     out.position = vec4f((pos + vertex) * 2. / box_size - 1., 0., 1.);
     out.color = mix(vec3f(0.0, 0.2, 1.), vec3f(1., 0.2, 0.0), relative_speed);
@@ -114,7 +114,7 @@ fn shiny2_circle(tex_coord: vec2<f32>, base_color: vec3<f32>, salt: u32) -> vec4
     let r = length(tex_coord);
     let a = atan2(tex_coord.y, tex_coord.x) / tau;
 
-    let t = udata.time + f32(salt);
+    let t = udata.real_time + f32(salt);
 
     // Get the color
     var xCol = (a + ((100. + t) / 3.0)) * 3.0;

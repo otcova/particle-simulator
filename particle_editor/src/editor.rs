@@ -17,7 +17,7 @@ use crate::{
     backend::Backend,
     egui_utils::{EguiContext, NumFormat, NumFormatter},
     graphics::Graphics,
-    simulation::Simulation,
+    simulation::{Simulation, TimelineFrame},
     wgpu_utils::WgpuContext,
 };
 
@@ -32,6 +32,7 @@ pub struct Editor {
     box_size: u32,
     floating_windows: bool,
     close_window: bool,
+    interpolation: Interpolation,
 
     num_formatter: NumFormatter,
 
@@ -59,6 +60,7 @@ impl Editor {
             box_size: 5,
             floating_windows: false,
             close_window: false,
+            interpolation: Interpolation::Velocity,
 
             num_formatter: NumFormatter {
                 figures: 3,
@@ -72,7 +74,7 @@ impl Editor {
             play_time: 0.,
             play_speed: 100e-15,
             auto_play: false,
-            loop_play: true,
+            loop_play: false,
         };
 
         editor.egui.context().style_mut(|style| {
@@ -91,7 +93,9 @@ impl Editor {
         self.simulation.update(&mut self.backend);
 
         if self.auto_play {
-            self.play_time += self.play_speed;
+            let dt = self.egui.context().input(|i| i.stable_dt);
+            self.play_time += dt * self.play_speed;
+
             if self.play_time > self.simulation.sim_len() {
                 if self.loop_play {
                     self.play_time = 0.;
@@ -187,12 +191,21 @@ impl Editor {
                     h: rect.size().y as u32,
                 });
 
-                self.graphics.render(
-                    &self.gpu,
-                    encoder,
-                    self.simulation.frame(self.play_time),
-                    canvas_rect,
-                );
+                let TimelineFrame {
+                    frame, frame_time, ..
+                } = self.simulation.frame(self.play_time);
+
+                match self.interpolation {
+                    Interpolation::None => {
+                        self.graphics.uniform.simulation_time = frame_time;
+                    }
+                    Interpolation::Velocity => {
+                        self.graphics.uniform.simulation_time = self.play_time;
+                    }
+                }
+                self.graphics.uniform.frame_time = frame_time;
+
+                self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
 
                 // let fill = ui.style().visuals.panel_fill;
                 // ui.painter().rect_filled(_, 0, fill);
@@ -424,9 +437,34 @@ impl Editor {
         });
 
         self.ui_section(ui, "Stats", |editor, ui| {
+            let TimelineFrame {
+                frame,
+                frame_time,
+                frame_idx,
+            } = editor.simulation.frame(editor.play_time);
+            let particles_count = frame.particles().len() as f32;
+            let frames_count = editor.simulation.frames_count() as f32;
+            let total_sim_time = editor.simulation.sim_len();
+
             Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Time");
                 ui.label(editor.num(editor.play_time, "s"));
+                ui.end_row();
+
+                ui.label("Frame Time");
+                ui.horizontal(|ui| {
+                    ui.label(editor.num(frame_time, "s"));
+                    ui.label("/");
+                    ui.label(editor.num_int(total_sim_time, ""));
+                });
+                ui.end_row();
+
+                ui.label("Frame Index");
+                ui.horizontal(|ui| {
+                    ui.label(editor.num_int((frame_idx + 1) as f32, ""));
+                    ui.label("/");
+                    ui.label(editor.num_int(frames_count, ""));
+                });
                 ui.end_row();
 
                 ui.label("Step delta time");
@@ -434,9 +472,7 @@ impl Editor {
                 ui.end_row();
 
                 ui.label("Num Particles");
-                let frame = editor.simulation.frame(editor.play_time);
-                let particles_count = frame.particles().len();
-                ui.label(editor.num(particles_count as f32, ""));
+                ui.label(editor.num(particles_count, ""));
                 ui.end_row();
 
                 ui.end_row();
@@ -472,16 +508,7 @@ impl Editor {
             Grid::new("memory-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Timeline RAM");
                 let ram = editor.simulation.timeline_ram();
-                if ram < 1000 {
-                    let mut f = editor.num_formatter;
-                    f.format = NumFormat::Metric;
-                    f.figures = 0;
-                    ui.label(f.fmt(ram as f32, "B"));
-                } else {
-                    let mut f = editor.num_formatter;
-                    f.figures = 3;
-                    ui.label(f.fmt(ram as f32, "B"));
-                }
+                ui.label(editor.num_int(ram as f32, "B"));
                 ui.end_row();
             });
 
@@ -538,6 +565,17 @@ impl Editor {
                         ui.selectable_value(rtx, 2, rtx_names[2]);
                     });
                 ui.end_row();
+
+                ui.label("Interpolation");
+                ComboBox::from_id_salt("Interpolation")
+                    .selected_text(editor.interpolation.name())
+                    .show_ui(ui, |ui| {
+                        let v = &mut editor.interpolation;
+                        use Interpolation::*;
+                        ui.selectable_value(v, None, None.name());
+                        ui.selectable_value(v, Velocity, Velocity.name());
+                    });
+                ui.end_row();
             });
 
             if ui.button("Full Screen").clicked() {
@@ -552,6 +590,18 @@ impl Editor {
                 editor.floating_windows = true;
             }
         });
+    }
+
+    fn num_int(&self, n: f32, unit: &'static str) -> WidgetText {
+        let mut f = self.num_formatter;
+        if n < 1000.0 {
+            f.format = NumFormat::Metric;
+            f.figures = 0;
+            f.fmt(n, unit)
+        } else {
+            f.figures = u32::min(3, f.figures);
+            f.fmt(n, unit)
+        }
     }
 
     fn num(&self, n: f32, unit: &'static str) -> WidgetText {
@@ -575,7 +625,7 @@ impl Editor {
                     let resp = ui.add_visible(
                         false,
                         egui::Slider::new(&mut cursor, (0.)..=t_time)
-                            .suffix(format!("/{t_time_text}"))
+                            .suffix(format!(" /{t_time_text}"))
                             .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
                     );
 
@@ -583,12 +633,24 @@ impl Editor {
                     ui.style_mut().spacing.slider_width =
                         (0 as f32).max(ui.available_width() - resp.rect.width());
 
-                    ui.add(
-                        egui::Slider::new(&mut cursor, (0.)..=t_time)
-                            .suffix(format!("/{t_time_text}"))
-                            .trailing_fill(self.simulation.sim_len() != 0.)
-                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
-                    );
+                    if t_time == 0. {
+                        ui.add(
+                            egui::Slider::new(&mut cursor, (0.)..=0.1)
+                                .fixed_decimals(0)
+                                .suffix(format!(" /{t_time_text}"))
+                                .custom_formatter(|_, _| self.num_formatter.raw_string(0., "s")),
+                        );
+                    } else {
+                        ui.add(
+                            egui::Slider::new(&mut cursor, (0.)..=t_time)
+                                .clamping(egui::SliderClamping::Never)
+                                .suffix(format!(" /{t_time_text}"))
+                                .trailing_fill(true)
+                                .custom_formatter(|n, _| {
+                                    self.num_formatter.raw_string(n as f32, "s")
+                                }),
+                        );
+                    }
 
                     self.play_time = cursor;
                 });
@@ -614,7 +676,7 @@ impl Editor {
 
                     ui.add(
                         egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
-                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s"))
+                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
                             .logarithmic(true),
                     );
 
@@ -686,6 +748,21 @@ impl Editor {
             egui::Window::new("Playback").show(ctx, content);
         } else {
             content(ui);
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Interpolation {
+    None,
+    Velocity,
+}
+
+impl Interpolation {
+    pub fn name(self) -> &'static str {
+        match self {
+            Interpolation::None => "None",
+            Interpolation::Velocity => "Velocity",
         }
     }
 }

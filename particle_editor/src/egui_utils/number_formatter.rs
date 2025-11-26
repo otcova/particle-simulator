@@ -56,13 +56,17 @@ impl NumFormatter {
             }
             NumFormat::Metric => {
                 let mut metric = *METRIC.last().unwrap();
-                for &(divisor, suffix) in METRIC {
-                    let threshold = divisor;
-                    if n >= threshold {
-                        metric = (divisor, suffix);
-                        break;
+                if n == 0. || !n.is_finite() {
+                    metric = (1.0, "");
+                } else {
+                    for &(divisor, suffix) in METRIC {
+                        let threshold = divisor;
+                        if n >= threshold {
+                            metric = (divisor, suffix);
+                            break;
+                        }
                     }
-                }
+                };
 
                 let scaled = n / metric.0;
                 let decs = decimals_for_figures(scaled, self.figures);
@@ -129,7 +133,7 @@ impl NumFormatter {
             }
             NumFormat::Metric => {
                 let mut metric = *METRIC.last().unwrap();
-                if n == 0. {
+                if n == 0. || !n.is_finite() {
                     metric = (1.0, "");
                 } else {
                     for &(divisor, suffix) in METRIC {

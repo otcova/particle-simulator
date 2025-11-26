@@ -10,6 +10,12 @@ struct TimeInterval {
     frame_count: usize,
 }
 
+pub struct TimelineFrame<'a> {
+    pub frame: &'a Frame,
+    pub frame_time: f32,
+    pub frame_idx: u32,
+}
+
 impl TimeInterval {
     pub fn add_frame(&mut self) {
         self.frame_count += 1;
@@ -93,25 +99,39 @@ impl Simulation {
         self.timeline_ram = 0;
     }
 
-    pub fn frame(&mut self, moment: f32) -> &Frame {
+    pub fn frames_count(&self) -> u32 {
+        self.frames.len() as u32
+    }
+
+    pub fn frame(&mut self, moment: f32) -> TimelineFrame<'_> {
         #[allow(clippy::collapsible_if)]
         if !self.frames.is_empty() {
-            if let Some(idx) = self.find_frame_ind(moment) {
-                let max_idx = self.frames.len() - 1;
-                return &self.frames[max_idx.min(idx)];
+            if let Some((frame_idx, frame_time)) = self.find_frame_ind(moment) {
+                return TimelineFrame {
+                    frame: &self.frames[frame_idx],
+                    frame_time,
+                    frame_idx: frame_idx as u32,
+                };
             }
         }
-        &self.default_frame
+
+        TimelineFrame {
+            frame: &self.default_frame,
+            frame_time: 0.,
+            frame_idx: 0,
+        }
     }
 
     pub fn timeline_ram(&self) -> usize {
         self.timeline_ram
     }
 
-    fn find_frame_ind(&self, moment: f32) -> Option<usize> {
+    fn find_frame_ind(&self, moment: f32) -> Option<(usize, f32)> {
         for t_i in self.times.iter().rev() {
             if t_i.start_time <= moment {
-                return Some(t_i.get_frame_ind(moment));
+                let idx = t_i.get_frame_ind(moment).min(t_i.frame_count - 1);
+                let time = t_i.start_time + t_i.dt * idx as f32;
+                return Some((idx, time));
             }
         }
         None
@@ -120,7 +140,13 @@ impl Simulation {
     pub fn sim_len(&self) -> f32 {
         let t_i = self.times.last();
         match t_i {
-            Some(t_i) => t_i.start_time + t_i.duration(),
+            Some(t_i) => {
+                if t_i.frame_count == 0 {
+                    t_i.start_time
+                } else {
+                    t_i.start_time + (t_i.frame_count - 1) as f32 * t_i.dt
+                }
+            }
             None => 0.,
         }
     }
@@ -133,14 +159,15 @@ impl Simulation {
                 .map(|t| format!("{:?} | ", t))
                 .collect::<String>(),
         );
-        let ind = self.find_frame_ind(moment);
-
-        res.push(ind.unwrap_or(0xFFFFFF).to_string());
-        res.push(
-            (self.frames.len() - 1)
-                .min(ind.unwrap_or(0xFFFFFF))
-                .to_string(),
-        );
+        if let Some((idx, frame_time)) = self.find_frame_ind(moment) {
+            res.push(format!(
+                "simulation_time: {}  frame_time: {}  frame_idx: {}",
+                moment, frame_time, idx
+            ));
+            res.push((self.frames.len() - 1).min(idx).to_string());
+        } else {
+            res.push("Frame not found".into());
+        };
 
         res
     }

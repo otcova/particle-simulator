@@ -9,8 +9,10 @@ use wgpu::{BindGroupLayoutEntry, hal::Rect, util::DeviceExt};
 pub struct Uniform {
     metadata: FrameMetadata,
     pub rtx: u32,
-    time: f32,
-    max_speed: f32,
+    real_time: f32,
+    pub frame_time: f32,
+    pub simulation_time: f32,
+    pub max_speed: f32,
 }
 
 pub struct Graphics {
@@ -235,7 +237,7 @@ impl Graphics {
     }
 
     fn update_uniform(&mut self, gpu: &WgpuContext, frame: &Frame) {
-        self.uniform.time = self.start_instant.elapsed().as_secs_f32();
+        self.uniform.real_time = self.start_instant.elapsed().as_secs_f32();
         self.uniform.metadata = *frame.metadata();
 
         let bytes = bytemuck::bytes_of(&self.uniform);
