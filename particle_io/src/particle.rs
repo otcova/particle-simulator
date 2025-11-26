@@ -103,6 +103,12 @@ impl Default for FrameMetadata {
     }
 }
 
+impl FrameMetadata {
+    pub fn frame_dt(&self) -> f32 {
+        self.step_dt * self.steps_per_frame as f32
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Frame(Vec<u8>);
 
@@ -318,8 +324,8 @@ impl Frame {
                 self.push(Particle {
                     x: pos.0 + (x - 0.5) * 0.5 * size,
                     y: pos.1 + (y - 0.5) * 0.5 * size,
-                    vx: (vx - 0.5) * 100000.,
-                    vy: (vy - 0.5) * 100000.,
+                    vx: (vx - 0.5) * 100.,
+                    vy: (vy - 0.5) * 100.,
                     ty: 1,
                 });
             }

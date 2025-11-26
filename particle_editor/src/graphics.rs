@@ -158,7 +158,7 @@ impl Graphics {
 
         let uniform = Uniform {
             rtx: 1,
-            max_speed: 1e5,
+            max_speed: 5000.,
             min_particle_size: 5.,
             ..Default::default()
         };

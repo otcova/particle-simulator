@@ -66,7 +66,7 @@ impl Simulation {
         while let Some(frame) = backend.read() {
             self.timeline_ram += frame.bytes().len();
 
-            let f_dt = frame.metadata().step_dt;
+            let f_dt = frame.metadata().frame_dt();
             #[allow(clippy::needless_late_init)]
             let cur_time: f32;
 

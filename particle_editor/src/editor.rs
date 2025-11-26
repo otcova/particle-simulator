@@ -73,7 +73,7 @@ impl Editor {
 
             // play related
             play_time: 0.,
-            play_speed: 100e-15,
+            play_speed: 1e-9,
             auto_play: false,
             loop_play: false,
         };
@@ -586,7 +586,15 @@ impl Editor {
 
                 ui.end_row();
 
-                ui.label("Min particle size");
+                ui.label("Max Speed for Color");
+                ui.add(
+                    Slider::new(&mut editor.graphics.uniform.max_speed, 1.0..=100_000.0)
+                        .logarithmic(true)
+                        .suffix("m/s"),
+                );
+                ui.end_row();
+
+                ui.label("Min Particle Size");
                 ui.add(
                     DragValue::new(&mut editor.graphics.uniform.min_particle_size)
                         .range(1.0..=40.0)

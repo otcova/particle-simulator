@@ -85,7 +85,7 @@ fn vertex_shader(
     }
 
     let quad_vertex = quad_verticies[vertex_index];
-    let relative_speed = length(particle.vel) / udata.max_speed;
+    let relative_speed = log2(1. + length(particle.vel)) / log2(1. + udata.max_speed);
     var pos = particle.pos + particle.vel * (udata.sim_time - udata.frame_time);
     let vertex = quad_vertex * particle_size;
 
