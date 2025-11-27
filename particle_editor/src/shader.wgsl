@@ -78,7 +78,7 @@ fn vertex_shader(
 
     // Force a minimum particle size
     let min_size = udata.pixel_size * udata.min_particle_size;
-    particle_size = max(particle_size, min_size);
+    particle_size = max(particle_size, min_size) + udata.pixel_size * 2.;
 
     if udata.rtx == 2u {
         particle_size *= rtx_extra_radius_scale;

@@ -1,14 +1,24 @@
-use std::io::pipe;
+use std::{
+    borrow::Cow,
+    collections::VecDeque,
+    io::ErrorKind,
+    net::{SocketAddr, TcpListener, TcpStream},
+};
 
-use particle_io::{Frame, Reader, Writer};
+use particle_io::{Frame, Reader, TcpClient, Writer};
 
-#[derive(Default)]
 pub struct Backend {
     reader: Option<Reader>,
     writer: Option<Writer>,
 
     pub reader_details: String,
     pub writer_details: String,
+
+    tcp_server: Result<TcpListener, String>,
+
+    // In case of disconnected backend, it writes/reads the frames
+    // from this queue.
+    loopback_queue: VecDeque<Frame>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -19,9 +29,34 @@ pub enum ConnectionState {
 
 impl Backend {
     pub fn new() -> Backend {
-        let mut backend = Backend::default();
-        backend.open_itself();
-        backend
+        Backend {
+            reader: None,
+            writer: None,
+            reader_details: "".into(),
+            writer_details: "".into(),
+            tcp_server: match TcpListener::bind("0.0.0.0:53123") {
+                Ok(tcp_server) => {
+                    if let Err(error) = tcp_server.set_nonblocking(true) {
+                        Err(error.to_string())
+                    } else {
+                        Ok(tcp_server)
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            },
+            loopback_queue: VecDeque::new(),
+        }
+    }
+
+    pub fn tcp_server_status(&self) -> Cow<'_, str> {
+        match &self.tcp_server {
+            Ok(server) => server
+                .local_addr()
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(|e| e.to_string())
+                .into(),
+            Err(error) => error.into(),
+        }
     }
 
     pub fn close_connection(&mut self) {
@@ -33,6 +68,8 @@ impl Backend {
     }
 
     pub fn open_backend_files(&mut self) {
+        self.loopback_queue.clear();
+
         let read_path = "./backend_out.bin".into();
         let write_path = "./backend_in.bin".into();
 
@@ -41,9 +78,13 @@ impl Backend {
                 self.writer = Some(writer);
                 self.writer_details = write_path;
             }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                self.writer = None;
+                self.writer_details = format!("File {:?} not found", write_path);
+            }
             Err(error) => {
                 self.writer = None;
-                self.writer_details = error;
+                self.writer_details = error.to_string();
             }
         }
 
@@ -52,45 +93,32 @@ impl Backend {
                 self.reader = Some(reader);
                 self.reader_details = read_path;
             }
-            Err(error) => {
+            Err(error) if error.kind() == ErrorKind::NotFound => {
                 self.reader = None;
-                self.reader_details = error;
-            }
-        }
-    }
-
-    pub fn open_tcp(&mut self) {
-        let addr = "0.0.0.0:53123";
-
-        match particle_io::new_tcp_server(addr) {
-            Ok((reader, writer)) => {
-                self.reader = Some(reader);
-                self.writer = Some(writer);
-                self.reader_details = format!("{} tcp", addr);
-                self.writer_details = format!("{} tcp", addr);
+                self.reader_details = format!("File {:?} not found", read_path);
             }
             Err(error) => {
                 self.reader = None;
-                self.writer = None;
-                self.reader_details = error.clone();
-                self.writer_details = error;
-            }
-        }
-    }
-
-    pub fn open_itself(&mut self) {
-        match pipe() {
-            Ok((rx, tx)) => {
-                self.reader = Some(Reader::new(rx));
-                self.writer = Some(Writer::new(tx));
-                self.reader_details = "Receiving from itself".into();
-                self.writer_details = "Sending to itself".into();
-            }
-            Err(error) => {
-                self.reader = None;
-                self.writer = None;
                 self.reader_details = error.to_string();
-                self.writer_details = error.to_string();
+            }
+        }
+    }
+
+    fn open_tcp(&mut self, stream: TcpStream, backend_addr: SocketAddr) {
+        self.loopback_queue.clear();
+
+        match stream.try_clone() {
+            Ok(stream2) => {
+                self.reader = Some(Reader::new(TcpClient(stream)));
+                self.writer = Some(Writer::new(TcpClient(stream2)));
+                self.reader_details = format!("{} tcp", backend_addr);
+                self.writer_details = format!("{} tcp", backend_addr);
+            }
+            Err(error) => {
+                self.reader = None;
+                self.writer = None;
+                self.reader_details = format!("{}", error);
+                self.writer_details = format!("{}", error);
             }
         }
     }
@@ -119,9 +147,20 @@ impl Backend {
         }
     }
 
+    fn try_accept_tcp_connection(&mut self) {
+        if let Ok(server) = &self.tcp_server {
+            let Ok((stream, addr)) = server.accept() else {
+                return;
+            };
+
+            self.open_tcp(stream, addr);
+        }
+    }
+
     pub fn read(&mut self) -> Option<Frame> {
         let Some(reader) = &self.reader else {
-            return None;
+            self.try_accept_tcp_connection();
+            return self.loopback_queue.pop_front();
         };
 
         match reader.read() {
@@ -136,6 +175,9 @@ impl Backend {
 
     pub fn write(&mut self, frame: &Frame) {
         let Some(writer) = &mut self.writer else {
+            if self.reader_connected() {
+                self.loopback_queue.push_back(frame.clone());
+            }
             return;
         };
 

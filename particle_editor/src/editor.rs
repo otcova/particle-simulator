@@ -313,37 +313,44 @@ impl Editor {
 
     fn left_panel(&mut self, ui: &mut egui::Ui) {
         self.ui_section(ui, "Backend", |editor, ui| {
-            ui.collapsing(
-                format!("Backend Output: {:?}", editor.backend.reader_state()),
-                |ui| {
-                    ui.label(&editor.backend.reader_details);
-                },
-            );
-            ui.collapsing(
-                format!("Backend Input: {:?}", editor.backend.writer_state()),
-                |ui| {
-                    ui.label(&editor.backend.writer_details);
-                },
-            );
+            Grid::new("backend-grid").num_columns(2).show(ui, |ui| {
+                if editor.backend.reader_connected() || editor.backend.writer_connected() {
+                    let button = ui.button("Disconnect");
+                    if button.clicked() {
+                        editor.backend.close_connection();
+                    }
+                } else {
+                    ui.label("Connect with ");
+                    ui.horizontal(|ui| {
+                        if ui.button("Files / Pipes").clicked() {
+                            editor.backend.open_backend_files();
+                        }
+                    });
+                }
+                ui.end_row();
+
+                ui.label("TCP Server ");
+                ui.label(editor.backend.tcp_server_status());
+                ui.end_row();
+            });
             ui.add_space(5.);
 
-            if ui.button("Connect to itself").clicked() {
-                editor.backend.open_itself();
+            if !editor.backend.reader_details.is_empty() {
+                ui.add_space(5.);
+                ui.label(format!(
+                    "{:?} Backend Output:\n  {}",
+                    editor.backend.reader_state(),
+                    editor.backend.reader_details
+                ));
             }
 
-            if ui.button("Connect by files").clicked() {
-                editor.backend.open_backend_files();
-            }
-
-            if ui.button("Connect by TCP").clicked() {
-                editor.backend.open_tcp();
-            }
-
-            if editor.backend.reader_connected() || editor.backend.writer_connected() {
-                let button = ui.button("Disconnect");
-                if button.clicked() {
-                    editor.backend.close_connection();
-                }
+            if !editor.backend.reader_details.is_empty() {
+                ui.add_space(5.);
+                ui.label(format!(
+                    "{:?} Backend Input:\n  {}",
+                    editor.backend.writer_state(),
+                    editor.backend.writer_details
+                ));
             }
         });
 

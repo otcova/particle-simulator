@@ -51,11 +51,9 @@ impl Reader {
         Reader { receiver }
     }
 
-    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Reader, String> {
-        match OpenOptions::new().read(true).open(path) {
-            Ok(file) => Ok(Self::new(file)),
-            Err(error) => Err(format!("{}", error)),
-        }
+    pub fn open_file<P: AsRef<Path>>(path: P) -> std::io::Result<Reader> {
+        let file = OpenOptions::new().read(true).open(path)?;
+        Ok(Self::new(file))
     }
 
     // Returns error if disconnected

@@ -1,12 +1,18 @@
+CUDA_HOME := $(or $(CUDA_HOME),$(wildcard /Soft/cuda/12.2.2),$(wildcard /opt/cuda),$(wildcard /usr/local/cuda))
+
+# If still empty → throw an error
+ifeq ($(CUDA_HOME),)
+$(error Could not find a valid CUDA installation. You can set a custom path with CUDA_HOME environment variable)
+endif
+
 IO_LIB = -I../particle_io/c_api/include/ -lparticle_io_c
 DEBUG_FLAGS = -O3 $(IO_LIB) -L../target/debug #-flto
-FLAGS = -O3 $(IO_LIB) -L../target/release #-flto
+FLAGS       = -O3 $(IO_LIB) -L../target/release #-flto
 
-CUDA_HOME   = /opt/cuda
 NVCC        = $(CUDA_HOME)/bin/nvcc
-ARCH       = -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89
-NVCC_FLAGS  = -O3 -Wno-deprecated-gpu-targets -I$(CUDA_HOME)/include $(ARCH) --ptxas-options=-v -I$(CUDA_HOME)/sdk/CUDALibraries/common/inc
-LD_FLAGS    = -lcudart -Xlinker -rpath,$(CUDA_HOME)/lib64 -I$(CUDA_HOME)/sdk/CUDALibraries/common/lib
+ARCH        = -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89
+NVCC_FLAGS  = -O3 -Wno-deprecated-gpu-targets -I$(CUDA_HOME)/include $(ARCH) -I$(CUDA_HOME)/sdk/CUDALibraries/common/inc --ptxas-options=-v 
+LD_FLAGS    = -lcudart -I$(CUDA_HOME)/sdk/CUDALibraries/common/lib  -Xlinker -rpath,$(CUDA_HOME)/lib64
 
 SRC_FILES = $(shell find src -type f)
 

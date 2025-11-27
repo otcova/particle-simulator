@@ -13,11 +13,9 @@ impl Writer {
     }
 
     // Buffer will only be used for start/end_write.
-    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Writer, String> {
-        match fs::OpenOptions::new().append(true).open(path) {
-            Ok(file) => Ok(Writer::new(file)),
-            Err(error) => Err(format!("{}", error)),
-        }
+    pub fn open_file<P: AsRef<Path>>(path: P) -> io::Result<Writer> {
+        let file = fs::OpenOptions::new().append(true).open(path)?;
+        Ok(Writer::new(file))
     }
 
     // This does an extra copy wich could be avoided using write_fn

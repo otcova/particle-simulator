@@ -1,7 +1,7 @@
 #pragma once
 #include <assert.h>
-#include <particle_io.h>
 #include <cuda_runtime.h>
+#include <particle_io.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +18,8 @@ static Particle* k_1;
 static Particle* k_internal;
 static FrameHeader* frame;
 
+bool running_with_gpus;
+
 __global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
@@ -31,12 +33,14 @@ __global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32
     dst[i].ty = p.ty;
 
     if (dst[i].vx > 0.) {
-      if (dst[i].x > 1.) dst[i].x = 0.;
-    } else if (dst[i].x < 0.) dst[i].x = 1.;
+        if (dst[i].x > 1.) dst[i].x = 0.;
+    } else if (dst[i].x < 0.)
+        dst[i].x = 1.;
 
     if (dst[i].vy > 0.) {
-      if (dst[i].y > 1.) dst[i].y = 0.;
-    } else if (dst[i].y < 0.) dst[i].y = 1.;
+        if (dst[i].y > 1.) dst[i].y = 0.;
+    } else if (dst[i].y < 0.)
+        dst[i].y = 1.;
 }
 
 static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
@@ -109,26 +113,39 @@ static void frame_prepare(FrameHeader* src, FrameHeader* dst) {
 }
 
 static void kernel_init() {
+    int gpus_count;
+    cudaError_t error = cudaGetDeviceCount(&gpus_count);
+    running_with_gpus = error == cudaSuccess && gpus_count > 0;
+
     size_t k_size = sizeof(Particle) * MAX_PARTICLE_COUNT;
 
-    cudaMalloc((void**)&k_0, k_size * 2);
-    assert(k_0);
+    if (running_with_gpus) {
+        cudaMalloc((void**)&k_0, k_size * 2);
+        assert(k_0);
 
-    cudaMalloc((void**)&k_1, k_size * 2);
-    assert(k_1);
+        cudaMalloc((void**)&k_1, k_size * 2);
+        assert(k_1);
 
-    cudaMalloc((void**)&k_internal, k_size * 2);
-    assert(k_internal);
+        cudaMalloc((void**)&k_internal, k_size * 2);
+        assert(k_internal);
 
-    cudaMallocHost((void**)&frame, packet_size(MAX_PARTICLE_COUNT) * 2);
-    assert(frame);
+        cudaMallocHost((void**)&frame, packet_size(MAX_PARTICLE_COUNT) * 2);
+        assert(frame);
+    } else {
+        frame = (FrameHeader*)malloc(packet_size(MAX_PARTICLE_COUNT) * 2);
+        assert(frame);
+    }
 
     *frame = frame_header_init();
 }
 
 static void kernel_destroy() {
-    cudaFree(k_0);
-    cudaFree(k_1);
-    cudaFree(k_internal);
-    cudaFreeHost(frame);
+    if (running_with_gpus) {
+        cudaFree(k_0);
+        cudaFree(k_1);
+        cudaFree(k_internal);
+        cudaFreeHost(frame);
+    } else {
+        free(frame);
+    }
 }
