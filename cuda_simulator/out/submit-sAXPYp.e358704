@@ -1,5 +1,0 @@
-
-thread '<unnamed>' (95312) panicked at particle_io/c_api/src/writer.rs:48:65:
-called `Result::unwrap()` on an `Err` value: "Broken pipe (os error 32)"
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-/var/spool/slurmd/job358704/slurm_script: line 27: 95312 Segmentation fault      (core dumped) ./build/cuda_simulator_debug

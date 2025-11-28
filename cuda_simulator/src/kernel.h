@@ -20,27 +20,62 @@ static FrameHeader* frame;
 
 bool running_with_gpus;
 
-__global__ static void gpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
+// # Desmos
+// C\ =\ \frac{n}{n-m}\left(\frac{n}{m}\right)^{\frac{m}{n-m}}
+// F\left(r\right)=C\cdot p\cdot\frac{m\left(\frac{s}{r}\right)^{m}-n\left(\frac{s}{r}\right)^{n}}{r}
+// V\left(r\right)=C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
+//
+// # Wolframalpha
+// Partial[\(40)Power[\(40)Divide[s,x]\(41),n]-Power[\(40)Divide[s,x]\(41),m]\(41) ,x]
+
+__global__ static void gpu_kernel(Particle* src, Particle* dst, FrameMetadata frame, uint32_t count) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
 
     Particle p = src[i];
+    
+    float fx = 0;
+    float fy = 0;
+    
+    float k_b = 1.380649e-23;
+    float mass = 6.63352599e-26;
+    MiePotentialParams params = frame.particles[0];
+    float C = (params.n / (params.n - params.m)) * powf(params.n / params.m, params.n / (params.n - params.m));
+    params.epsilon *= k_b;
+ 
+    for (uint32_t j = 0; j < count; ++j) {
+        if (j == i) continue;
 
-    dst[i].x = p.x + p.vx * dt;
-    dst[i].y = p.y + p.vy * dt;
-    dst[i].vx = p.vx;
-    dst[i].vy = p.vy;
+        float rx = src[j].x - src[i].x;
+        float ry = src[j].y - src[i].y;
+        float r = hypotf(rx, ry);
+        float sr = params.sigma / r;
+
+        float f = C * params.epsilon * (params.m * powf(sr, params.m) - params.n * powf(sr, params.n)) / r;
+        // Alternative:  __fsqrt_rn(float)
+        
+        // Normalize vector r
+        rx /= r;
+        ry /= r;
+
+        fx += f * rx;
+        fy += f * ry;
+    }    
+
+    // f = m v/dt
+    // f dt / m = v
+    dst[i].vx = p.vx + fx * frame.step_dt / mass;
+    dst[i].vy = p.vy + fy * frame.step_dt / mass;
+
+    dst[i].x = p.x + p.vx * frame.step_dt;
+    dst[i].y = p.y + p.vy * frame.step_dt;
+
     dst[i].ty = p.ty;
 
-    if (dst[i].vx > 0.) {
-        if (dst[i].x > 1.) dst[i].x = 0.;
-    } else if (dst[i].x < 0.)
-        dst[i].x = 1.;
-
-    if (dst[i].vy > 0.) {
-        if (dst[i].y > 1.) dst[i].y = 0.;
-    } else if (dst[i].y < 0.)
-        dst[i].y = 1.;
+    if (dst[i].x < 0. || dst[i].x >= frame.box_width)
+        dst[i].vx = -dst[i].vx;
+    if (dst[i].y < 0. || dst[i].y >= frame.box_height)
+        dst[i].vy = -dst[i].vy;
 }
 
 static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
@@ -55,24 +90,27 @@ static void cpu_kernel(Particle* src, Particle* dst, float dt, uint32_t count) {
     }
 }
 
-static void step(Particle* src, Particle* dst, float dt, uint32_t count) {
+static void step(Particle* src, Particle* dst, FrameMetadata frame, uint32_t count) {
     // cpu_kernel(src, dst, dt, count);
 
     uint32_t nThreads = 256;
     uint32_t nBlocks = (count + nThreads - 1) / nThreads;
-    gpu_kernel<<<nBlocks, nThreads>>>(src, dst, dt, count);
+    gpu_kernel<<<nBlocks, nThreads>>>(src, dst, frame, count);
 }
 
 static void run_kernel_async(FrameHeader* frame, Particle* k_src, Particle* k_dst) {
-    const uint32_t steps = frame->metadata.steps_per_frame | 1;
-
-    float dt = frame->metadata.step_dt / steps;
     uint32_t count = frame->particles_count;
 
-    step(k_src, k_dst, dt, count);
-    for (uint32_t i = 1; i < steps; i += 2) {
-        step(k_dst, k_internal, dt, count);
-        step(k_internal, k_dst, dt, count);
+    if (frame->metadata.steps_per_frame & 1 == 0) {
+        step(k_src, k_internal, frame->metadata, count);
+        step(k_internal, k_dst, frame->metadata, count);
+    } else {
+        step(k_src, k_dst, frame->metadata, count);
+    }
+
+    for (uint32_t i = 2; i < frame->metadata.steps_per_frame; i += 2) {
+        step(k_dst, k_internal, frame->metadata, count);
+        step(k_internal, k_dst, frame->metadata, count);
     }
 }
 

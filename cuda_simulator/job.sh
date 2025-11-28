@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ### Directivas para el gestor de colas
-#SBATCH --job-name=sAXPYp
+#SBATCH --job-name=:O
 #SBATCH -D .
 #SBATCH --output=out/submit-sAXPYp.o%j
 #SBATCH --error=out/submit-sAXPYp.e%j

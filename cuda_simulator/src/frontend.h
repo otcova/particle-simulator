@@ -14,7 +14,7 @@ static void frontend_init_files() {
 }
 
 static void frontend_init_tcp() {
-    new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+    new_tcp_client(&reader, &writer, "10.192.196.245:53123");
 }
 
 static void frontend_destroy() {
