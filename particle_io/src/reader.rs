@@ -15,7 +15,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new<R: Read + Send + 'static>(mut stream: R) -> Reader {
-        let (sender, receiver) = mpsc::sync_channel(16);
+        let (sender, receiver) = mpsc::sync_channel(64);
 
         std::thread::spawn(move || {
             let mut header = FrameHeader::default();
@@ -77,19 +77,21 @@ fn read_blocking<R: Read, F: FnMut() -> bool>(
     mut abort: F,
 ) -> std::io::Result<()> {
     let mut retry = move || {
-        let abort_error = std::io::Error::new(
-            ErrorKind::ConnectionAborted,
-            "Read canceled due to aborted connection",
-        );
+        let abort_error = || {
+            std::io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "Read canceled due to aborted connection",
+            )
+        };
 
         if abort() {
-            return Err(abort_error);
+            return Err(abort_error());
         }
 
         std::thread::sleep(Duration::from_millis(1));
 
         if abort() {
-            return Err(abort_error);
+            return Err(abort_error());
         }
         Ok(())
     };

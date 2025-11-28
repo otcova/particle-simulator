@@ -76,7 +76,7 @@ impl Simulation {
                     if t_i.dt == f_dt {
                         t_i.add_frame();
                         self.frames.push(frame);
-                        return;
+                        continue;
                     }
                     cur_time = t_i.start_time + t_i.duration();
                 }

@@ -47,11 +47,6 @@ int main() {
     while (1) {
         runtime(k_1, k_0);
         runtime(k_0, k_1);
-        // to not have to wait 1000 years to see changes
-        // while (!receive_from_frontend(frame)) {
-        //    thrd_yield();
-        //}
-        // write_gpu(frame, k_1);
     }
 
     kernel_destroy();
