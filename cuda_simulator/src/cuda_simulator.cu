@@ -40,10 +40,6 @@ int main() {
         thrd_yield();
     }
 
-    frame_print(frame);
-    // frame->metadata.step_dt = 0.100002;
-    // frame->metadata.steps_per_frame = 100000;
-
     write_gpu(frame, k_0);
     run_kernel_async(frame, k_0, k_1);
     send_to_frontend(frame);

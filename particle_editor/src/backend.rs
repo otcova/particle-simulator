@@ -175,7 +175,7 @@ impl Backend {
 
     pub fn write(&mut self, frame: &Frame) {
         let Some(writer) = &mut self.writer else {
-            if self.reader_connected() {
+            if !self.reader_connected() {
                 self.loopback_queue.push_back(frame.clone());
             }
             return;

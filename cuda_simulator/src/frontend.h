@@ -25,6 +25,7 @@ static bool receive_from_frontend(FrameHeader* frame) {
     if (!received_frame.ptr) return false;
 
     frame_prepare(received_frame.ptr, frame);
+    frame_print(frame);
     frame_destroy(&received_frame);
     return true;
 }

@@ -363,20 +363,18 @@ impl Editor {
                         ui.add(Slider::new(&mut editor.box_size, 0..=20));
                     });
 
-                    ui.add_enabled_ui(editor.backend.writer_connected(), |ui| {
-                        if ui.button("Send To Backend").clicked() {
-                            let mut frame = Frame::new();
-                            *frame.metadata_mut() = editor.sim_params;
-                            let pos = (
-                                editor.sim_params.box_width / 2.,
-                                editor.sim_params.box_height / 2.,
-                            );
-                            let size =
-                                f32::min(editor.sim_params.box_width, editor.sim_params.box_height);
-                            frame.push_square(pos, size, editor.box_size);
-                            editor.backend.write(&frame);
-                        }
-                    });
+                    if ui.button("Send To Backend").clicked() {
+                        let mut frame = Frame::new();
+                        *frame.metadata_mut() = editor.sim_params;
+                        let pos = (
+                            editor.sim_params.box_width / 2.,
+                            editor.sim_params.box_height / 2.,
+                        );
+                        let size =
+                            f32::min(editor.sim_params.box_width, editor.sim_params.box_height);
+                        frame.push_square(pos, size, editor.box_size);
+                        editor.backend.write(&frame);
+                    }
                 });
         });
 

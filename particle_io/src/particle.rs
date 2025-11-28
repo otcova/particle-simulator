@@ -177,22 +177,27 @@ impl Display for Frame {
             box_height,
             ..
         } = *self.metadata();
-        writeln!(f, "  particle_count = {}", self.particles().len())?;
         writeln!(f, "  step dt = {}", step_dt)?;
         writeln!(f, "  steps per frame = {}", steps_per_frame)?;
         writeln!(f, "  box size = ({}, {})", box_width, box_height)?;
         writeln!(f, "  ...")?;
-        for (i, p) in self.particles().iter().enumerate().take(5) {
-            writeln!(
-                f,
-                "  [{}] = {{ x={}, y={}, vx={}, vy={}, ty={} }}",
-                i, p.x, p.y, p.vx, p.vy, p.ty
-            )?;
+        if self.particles().is_empty() {
+            writeln!(f, "  particles[0] = {{}}")?;
+        } else {
+            writeln!(f, "  particles[{}] = {{", self.particles().len())?;
+            for (i, p) in self.particles().iter().enumerate().take(5) {
+                writeln!(
+                    f,
+                    "    [{}] = {{ x={}, y={}, vx={}, vy={}, ty={} }}",
+                    i, p.x, p.y, p.vx, p.vy, p.ty
+                )?;
+            }
+            if self.particles().len() > 5 {
+                writeln!(f, "    ...")?;
+            }
+            writeln!(f, "  }}")?;
         }
-        if !self.particles().len() > 5 {
-            writeln!(f, "  ...")?;
-        }
-        writeln!(f, "-----------")?;
+        writeln!(f, "-------------")?;
         Ok(())
     }
 }
