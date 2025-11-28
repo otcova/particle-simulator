@@ -43,11 +43,21 @@ pub unsafe extern "C" fn reader_read(reader: *mut Reader) -> Frame {
     Frame::from(received)
 }
 
+/// Returns false if the operations did not succeed
+///
 /// # Safety
 /// 1. The provided reader pointer must be initialized
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn reader_read_last(reader: *mut Reader) -> Frame {
+pub unsafe extern "C" fn reader_read_last(reader: *mut Reader, frame: *mut Frame) -> bool {
     let reader = reader as *mut particle_io::Reader;
-    let received = std::iter::from_fn(|| unsafe { &*reader }.read().unwrap());
-    Frame::from(received.last())
+    let mut succeed = true;
+    let received = std::iter::from_fn(|| match unsafe { &*reader }.read() {
+        Ok(frame) => frame,
+        Err(()) => {
+            succeed = false;
+            None
+        }
+    });
+    unsafe { *frame = Frame::from(received.last()) };
+    succeed
 }

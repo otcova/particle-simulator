@@ -37,14 +37,23 @@ pub unsafe extern "C" fn writer_destroy(writer: *mut Writer) {
     unsafe { drop_in_place(writer) };
 }
 
+/// Returns false if the operations did not succeed
+///
 /// # Safety
 /// 1. The provided writer pointer must be initialized
 /// 2. The provided writer pointer must be initialized
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn writer_write(writer: *mut Writer, frame: *mut FrameHeader) {
+pub unsafe extern "C" fn writer_write(writer: *mut Writer, frame: *mut FrameHeader) -> bool {
     let writer = writer as *mut particle_io::Writer;
 
     unsafe {
-        ptr_as_frame(frame, |frame| (&mut *writer).write(frame).unwrap());
+        ptr_as_frame(frame, |frame| {
+            if let Err(err) = (&mut *writer).write(frame) {
+                eprintln!("[particle_io_c::Writer] {}", err);
+                false
+            } else {
+                true
+            }
+        })
     }
 }

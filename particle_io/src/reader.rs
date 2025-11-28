@@ -14,8 +14,10 @@ pub struct Reader {
 }
 
 impl Reader {
+    const MAX_ENQUEUED_FRAMES: usize = 2048;
+
     pub fn new<R: Read + Send + 'static>(mut stream: R) -> Reader {
-        let (sender, receiver) = mpsc::sync_channel(64);
+        let (sender, receiver) = mpsc::sync_channel(Reader::MAX_ENQUEUED_FRAMES);
 
         std::thread::spawn(move || {
             let mut header = FrameHeader::default();

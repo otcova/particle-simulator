@@ -39,16 +39,21 @@ impl Frame {
     }
 }
 
-pub(crate) unsafe fn ptr_as_frame<F: FnOnce(&mut particle_io::Frame)>(ptr: *mut FrameHeader, f: F) {
+pub(crate) unsafe fn ptr_as_frame<R, F: FnOnce(&mut particle_io::Frame) -> R>(
+    ptr: *mut FrameHeader,
+    f: F,
+) -> R {
     let particles_count = unsafe { &*ptr }.particles_count;
     let size = FrameHeader::packet_size(particles_count);
     // Safety: We do not mutate nor drop the Vec
     let bytes = unsafe { Vec::from_raw_parts(ptr as *mut u8, size, size) };
     let mut frame = particle_io::Frame::from_bytes(bytes);
 
-    f(&mut frame);
+    let result = f(&mut frame);
 
     frame.into_bytes().leak();
+
+    result
 }
 
 /// This destructor sets and checks the internal `ptr` to null, so it can be called more than

@@ -31,23 +31,34 @@ static void runtime(Particle* src, Particle* dst) {
     }
 }
 
-int main() {
-    frontend_init_tcp();
-    kernel_init();
-
-    // Wait for first frame
-    while (!receive_from_frontend(frame)) {
-        thrd_yield();
-    }
+void main_loop() {
+    if (!frontend_is_connected) return;
 
     write_gpu(frame, k_0);
+    if (!frontend_is_connected) return;
+
     run_kernel_async(frame, k_0, k_1);
     send_to_frontend(frame);
 
     while (1) {
         runtime(k_1, k_0);
+        if (!frontend_is_connected) return;
+
         runtime(k_0, k_1);
+        if (!frontend_is_connected) return;
     }
+}
+
+int main() {
+    frontend_init_tcp();
+    kernel_init();
+
+    // Wait for first frame
+    while (!receive_from_frontend(frame) && frontend_is_connected) {
+        thrd_yield();
+    }
+
+    main_loop();
 
     kernel_destroy();
     frontend_destroy();
