@@ -1,50 +1,37 @@
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
 #include "frontend.h"
 #include "kernel.h"
 
-static void write_gpu(FrameHeader* src, Particle* dst) {
-    size_t size = sizeof(Particle) * src->particles_count;
-    // memcpy(dst, &src->particles, size);
-    cudaMemcpy(dst, &src->particles, size, cudaMemcpyHostToDevice);
-}
+static void compute_frame(size_t src, size_t dst) {
+    kernel_sync(frame);
+    kernel_run_async(frame, src, dst);
 
-static void read_gpu(Particle* src, FrameHeader* dst) {
-    size_t size = sizeof(Particle) * dst->particles_count;
-    // memcpy(&dst->particles, src, size);
-    cudaMemcpy(&dst->particles, src, size, cudaMemcpyDeviceToHost);
-}
-
-static void runtime(Particle* src, Particle* dst) {
-    sync_kernel();
-    run_kernel_async(frame, src, dst);
-
-    if (receive_from_frontend(frame)) {
-        write_gpu(frame, src);
-        run_kernel_async(frame, src, dst);
-        send_to_frontend(frame);
+    if (frontend_read(frame)) {
+        kernel_write(frame, src);
+        kernel_run_async(frame, src, dst);
+        frontend_write(frame);
     } else {
-        read_gpu(src, frame);
-        send_to_frontend(frame);
+        kernel_read(src, frame);
+        frontend_write(frame);
     }
 }
 
 void main_loop() {
     if (!frontend_is_connected) return;
 
-    write_gpu(frame, k_0);
+    kernel_write(frame, K0);
     if (!frontend_is_connected) return;
 
-    run_kernel_async(frame, k_0, k_1);
-    send_to_frontend(frame);
+    kernel_run_async(frame, K0, K1);
+    frontend_write(frame);
 
     while (1) {
-        runtime(k_1, k_0);
+        compute_frame(K1, K0);
         if (!frontend_is_connected) return;
 
-        runtime(k_0, k_1);
+        compute_frame(K0, K1);
         if (!frontend_is_connected) return;
     }
 }
@@ -54,7 +41,7 @@ int main() {
     kernel_init();
 
     // Wait for first frame
-    while (!receive_from_frontend(frame) && frontend_is_connected) {
+    while (!frontend_read(frame) && frontend_is_connected) {
         thrd_yield();
     }
 

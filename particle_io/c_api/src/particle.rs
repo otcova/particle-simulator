@@ -1,3 +1,4 @@
+pub use particle_io::{DataStructure, Device};
 pub use particle_io::{FrameHeader, FrameMetadata, Particle};
 
 #[repr(C)]

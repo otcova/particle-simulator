@@ -9,6 +9,8 @@ fn main() {
 
     cbindgen::Builder::new()
         .with_crate(&crate_dir)
+        .include_item("DataStructure")
+        .include_item("Device")
         .with_parse_include(&["particle_io"])
         .with_parse_deps(true)
         .with_language(Language::C)

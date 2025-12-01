@@ -17,19 +17,19 @@ LD_FLAGS    = -lcudart -I$(CUDA_HOME)/sdk/CUDALibraries/common/lib  -Xlinker -rp
 SRC_FILES = $(shell find src -type f)
 
 .PHONY: build
-build: build/particle_simulator
+build: build/cuda_simulator
 
 .PHONY: debug
-debug: build/particle_simulator_debug
+debug: build/cuda_simulator_debug
 
 .PHONY: clean
 clean:
 	rm -r build
 
-build/particle_simulator: $(SRC_FILES)
+build/cuda_simulator: $(SRC_FILES)
 	@mkdir -p build
 	$(NVCC) src/cuda_simulator.cu $(FLAGS) $(NVCC_FLAGS) $(LD_FLAGS) -o build/cuda_simulator
 
-build/particle_simulator_debug: $(SRC_FILES)
+build/cuda_simulator_debug: $(SRC_FILES)
 	@mkdir -p build
 	$(NVCC) src/cuda_simulator.cu $(DEBUG_FLAGS) $(NVCC_FLAGS) $(LD_FLAGS) -o build/cuda_simulator_debug

@@ -1,8 +1,7 @@
 use std::fmt::Display;
 
 use bytemuck::{
-    NoUninit, Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut,
-    from_bytes,
+    Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
 };
 
 #[repr(C)]
@@ -32,8 +31,14 @@ pub struct MiePotentialParams {
     pub m: f32,
 }
 
-#[repr(u32)]
-#[derive(Clone, Copy, Zeroable, NoUninit, PartialEq, Debug)]
+impl MiePotentialParams {
+    pub fn force0_r(self) -> f32 {
+        self.sigma * (self.n / self.m).powf(1. / (self.n - self.m))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum DataStructure {
     CompactArray,
     MatrixBuckets,
@@ -61,6 +66,37 @@ impl TryFrom<u32> for DataStructure {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Device {
+    Gpu,
+    CpuThreadPool,
+    CpuMainThread,
+}
+
+impl Device {
+    pub fn name(self) -> &'static str {
+        match self {
+            Device::Gpu => "GPU",
+            Device::CpuThreadPool => "CPU Thread Pool",
+            Device::CpuMainThread => "CPU Main Thread",
+        }
+    }
+}
+
+impl TryFrom<u32> for Device {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        use Device::*;
+        match value {
+            x if x == Gpu as u32 => Ok(Gpu),
+            x if x == CpuThreadPool as u32 => Ok(CpuThreadPool),
+            x if x == CpuMainThread as u32 => Ok(CpuMainThread),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug)]
 pub struct FrameMetadata {
     pub particles: [MiePotentialParams; 2],
@@ -71,17 +107,19 @@ pub struct FrameMetadata {
     pub box_height: f32,
 
     pub data_structure: u32,
-    pub _padding: [u32; 3],
+    pub device: u32,
+    pub _padding: [u32; 2],
 }
 
 impl Default for FrameMetadata {
     fn default() -> FrameMetadata {
         FrameMetadata {
-            step_dt: 100e-15,
+            step_dt: 1e-15,
             steps_per_frame: 10_000,
-            box_width: 100e-9,
-            box_height: 100e-9,
+            box_width: 50e-9,
+            box_height: 50e-9,
             data_structure: DataStructure::MatrixBuckets as u32,
+            device: Device::Gpu as u32,
             particles: [
                 MiePotentialParams {
                     // Nitrogen
@@ -302,38 +340,5 @@ impl Frame {
     /// Reserves space for at least an `additional` number of particles.
     pub fn reserve(&mut self, additional: u32) {
         self.0.reserve(size_of::<Particle>() * additional as usize);
-    }
-
-    pub fn push_square(&mut self, pos: (f32, f32), size: f32, particles: u32) {
-        self.reserve(particles * particles);
-
-        for idx_x in 0..particles {
-            for idx_y in 0..particles {
-                let a = (idx_x + 509186523).wrapping_mul(3644126341);
-                let b = (idx_y + 153252321).wrapping_mul(4235235234);
-                let c = (idx_x + 621876523).wrapping_mul(4124124122);
-                let d = (idx_y + 364373752).wrapping_mul(1423513984);
-
-                let vx = ((a ^ b) % 1024) as f32 / 1024.;
-                let vy = ((c ^ d) % 1024) as f32 / 1024.;
-
-                let mut x = 0.5;
-                let mut y = 0.5;
-
-                if particles > 1 {
-                    // Coordinates from 0 to 1 (inclusive)
-                    x = idx_x as f32 / (particles - 1) as f32;
-                    y = idx_y as f32 / (particles - 1) as f32;
-                }
-
-                self.push(Particle {
-                    x: pos.0 + (x - 0.5) * 0.5 * size,
-                    y: pos.1 + (y - 0.5) * 0.5 * size,
-                    vx: (vx - 0.5) * 100.,
-                    vy: (vy - 0.5) * 100.,
-                    ty: 1,
-                });
-            }
-        }
     }
 }

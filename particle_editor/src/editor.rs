@@ -4,7 +4,7 @@ use egui::{
     CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
     Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
 };
-use particle_io::{Frame, FrameMetadata};
+use particle_io::{Frame, FrameMetadata, ParticleLattice};
 use winit::{
     dpi::PhysicalSize,
     event::WindowEvent,
@@ -28,13 +28,13 @@ pub struct Editor {
     backend: Backend,
 
     ui_scale: f32,
-    box_size: u32,
     floating_windows: bool,
     close_window: bool,
     interpolation: Interpolation,
 
     num_formatter: NumFormatter,
 
+    lattice: ParticleLattice,
     sim_params: FrameMetadata,
 
     // play related
@@ -56,15 +56,20 @@ impl Editor {
             gpu,
 
             ui_scale: 1.15,
-            box_size: 5,
             floating_windows: false,
             close_window: false,
-            interpolation: Interpolation::Velocity,
+            interpolation: Interpolation::None,
 
             num_formatter: NumFormatter {
                 figures: 3,
                 format: NumFormat::Metric,
                 rgb: [140, 140, 180],
+            },
+
+            lattice: ParticleLattice {
+                particle_count: (5, 5),
+                distance_factor: 1.,
+                velocity: 1.0..=10.0,
             },
 
             sim_params: FrameMetadata {
@@ -73,7 +78,7 @@ impl Editor {
 
             // play related
             play_time: 0.,
-            play_speed: 1e-9,
+            play_speed: 10e-12,
             auto_play: false,
             loop_play: false,
         };
@@ -94,7 +99,7 @@ impl Editor {
         self.simulation.update(&mut self.backend);
 
         if self.auto_play {
-            let dt = self.egui.context().input(|i| i.stable_dt);
+            let dt = self.egui.context().input(|i| i.unstable_dt);
             self.play_time += dt * self.play_speed;
 
             if self.play_time > self.simulation.sim_len() {
@@ -243,28 +248,27 @@ impl Editor {
     }
 
     fn keyboard_shortcuts(&mut self, input: &mut egui::InputState) {
-        let esc = KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
-        if input.consume_shortcut(&esc) {
+        let mut shortcut = |modifiers: Modifiers, key: Key| -> bool {
+            input.consume_shortcut(&KeyboardShortcut::new(modifiers, key))
+        };
+
+        if shortcut(Modifiers::NONE, Key::Escape) {
             self.close_window = true;
         }
 
-        let f11 = KeyboardShortcut::new(Modifiers::NONE, Key::F11);
-        if input.consume_shortcut(&f11) {
+        if shortcut(Modifiers::NONE, Key::F11) {
             self.toggle_fullscreen();
         }
 
-        let space = KeyboardShortcut::new(Modifiers::NONE, Key::Space);
-        if input.consume_shortcut(&space) {
+        if shortcut(Modifiers::NONE, Key::Space) {
             self.auto_play = !self.auto_play;
         }
 
-        let left = KeyboardShortcut::new(Modifiers::NONE, Key::ArrowLeft);
-        if input.consume_shortcut(&left) {
+        if shortcut(Modifiers::NONE, Key::ArrowLeft) {
             self.play_time = (self.play_time - self.play_speed).max(0.);
         }
 
-        let right = KeyboardShortcut::new(Modifiers::NONE, Key::ArrowRight);
-        if input.consume_shortcut(&right) {
+        if shortcut(Modifiers::NONE, Key::ArrowRight) {
             self.play_time = if self.play_time + self.play_speed > self.simulation.sim_len() {
                 0.
             } else {
@@ -272,10 +276,22 @@ impl Editor {
             };
         }
 
-        // ignore this one
-        let d = KeyboardShortcut::new(Modifiers::NONE, Key::D);
-        if input.consume_shortcut(&d) {
-            println!("{:?}", self.simulation.print(self.play_time));
+        // Clear
+        if shortcut(Modifiers::NONE, Key::C) {
+            self.simulation.clear();
+        }
+
+        // Lattice
+        if shortcut(Modifiers::NONE, Key::L) {
+            let mut frame = Frame::new();
+            *frame.metadata_mut() = self.sim_params;
+            self.lattice.hex_square(&mut frame);
+            self.backend.write(&frame);
+        }
+
+        // Disconnect
+        if shortcut(Modifiers::NONE, Key::D) {
+            self.backend.close_connection();
         }
     }
 
@@ -355,24 +371,59 @@ impl Editor {
         });
 
         self.ui_section(ui, "Editor", |editor, ui| {
-            CollapsingHeader::new("Load Square")
+            CollapsingHeader::new("Lattice Preset")
                 .default_open(true)
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Size");
-                        ui.add(Slider::new(&mut editor.box_size, 0..=20));
-                    });
+                    Grid::new("lattice-params-grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Size");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    DragValue::new(&mut editor.lattice.particle_count.0)
+                                        .range(0..=100),
+                                );
+                                ui.label("x");
+                                ui.add(
+                                    DragValue::new(&mut editor.lattice.particle_count.1)
+                                        .range(0..=100),
+                                );
+                            });
+                            ui.end_row();
 
-                    if ui.button("Send To Backend").clicked() {
+                            ui.label("Distance factor");
+                            ui.add(
+                                DragValue::new(&mut editor.lattice.distance_factor)
+                                    .range(0.5..=10.0)
+                                    .speed(0.02),
+                            );
+                            ui.end_row();
+
+                            let mut min_vel = *editor.lattice.velocity.start();
+                            let mut max_vel = *editor.lattice.velocity.end();
+
+                            ui.label("Min velocity");
+                            ui.add(DragValue::new(&mut min_vel).range(0.0..=100.0).speed(0.1));
+                            ui.end_row();
+
+                            ui.label("Max velocity");
+                            ui.add(DragValue::new(&mut max_vel).range(0.0..=100.0).speed(0.1));
+                            ui.end_row();
+
+                            editor.lattice.velocity = min_vel..=max_vel;
+                        });
+
+                    if ui.button("Hexagonal Square").clicked() {
                         let mut frame = Frame::new();
                         *frame.metadata_mut() = editor.sim_params;
-                        let pos = (
-                            editor.sim_params.box_width / 2.,
-                            editor.sim_params.box_height / 2.,
-                        );
-                        let size =
-                            f32::min(editor.sim_params.box_width, editor.sim_params.box_height);
-                        frame.push_square(pos, size, editor.box_size);
+                        editor.lattice.hex_square(&mut frame);
+                        editor.backend.write(&frame);
+                    }
+
+                    if ui.button("Square").clicked() {
+                        let mut frame = Frame::new();
+                        *frame.metadata_mut() = editor.sim_params;
+                        editor.lattice.square(&mut frame);
                         editor.backend.write(&frame);
                     }
                 });
@@ -384,7 +435,7 @@ impl Editor {
             Grid::new("params-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Step delta time");
                 ui.add(
-                    Slider::new(&mut params.step_dt, 1e-15..=1e-1)
+                    Slider::new(&mut params.step_dt, 0.1e-15..=1000e-15)
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "s"))
                         .logarithmic(true),
                 );
@@ -434,6 +485,23 @@ impl Editor {
                         ui.selectable_value(d, MatrixBuckets as u32, MatrixBuckets.name());
                     });
                 ui.end_row();
+
+                ui.label("Device");
+
+                let current_device = particle_io::Device::try_from(params.device)
+                    .map(|d| d.name())
+                    .unwrap_or("Invalid device");
+
+                ComboBox::from_id_salt("Device")
+                    .selected_text(current_device)
+                    .show_ui(ui, |ui| {
+                        let d = &mut params.device;
+                        use particle_io::Device::*;
+                        ui.selectable_value(d, Gpu as u32, Gpu.name());
+                        ui.selectable_value(d, CpuThreadPool as u32, CpuThreadPool.name());
+                        ui.selectable_value(d, CpuMainThread as u32, CpuMainThread.name());
+                    });
+                ui.end_row();
             });
             ui.add_space(20.);
 
@@ -479,7 +547,10 @@ impl Editor {
                 frame_time,
                 frame_idx,
             } = editor.simulation.frame(editor.play_time);
+
             let particles_count = frame.particles().len() as f32;
+            let metadata = *frame.metadata();
+
             let frames_count = editor.simulation.frames_count() as f32;
             let total_sim_time = editor.simulation.sim_len();
 
@@ -537,6 +608,25 @@ impl Editor {
 
                 ui.label("Total energy");
                 ui.label(editor.num(0.000051234124, "J"));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Data Structure");
+
+                ui.label(
+                    particle_io::DataStructure::try_from(metadata.data_structure)
+                        .map(|s| s.name())
+                        .unwrap_or("Unknown"),
+                );
+                ui.end_row();
+
+                ui.label("Using GPU");
+                ui.label(
+                    particle_io::Device::try_from(metadata.device)
+                        .map(|s| s.name())
+                        .unwrap_or("Unknown"),
+                );
                 ui.end_row();
             });
         });

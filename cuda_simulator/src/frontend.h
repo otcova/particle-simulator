@@ -14,7 +14,8 @@ static void frontend_init_files() {
 }
 
 static void frontend_init_tcp() {
-    new_tcp_client(&reader, &writer, "10.192.196.245:53123");
+    // new_tcp_client(&reader, &writer, "10.192.196.245:53123");
+    new_tcp_client(&reader, &writer, "0.0.0.0:53123");
 }
 
 static void frontend_destroy() {
@@ -23,20 +24,20 @@ static void frontend_destroy() {
 }
 
 // Returns true if received data
-static bool receive_from_frontend(FrameHeader* frame) {
+static bool frontend_read(FrameHeader* frame) {
     Frame received_frame;
     received_frame.ptr = NULL;
 
     frontend_is_connected = reader_read_last(&reader, &received_frame);
     if (!received_frame.ptr) return false;
 
-    frame_prepare(received_frame.ptr, frame);
+    kernel_prepare_frame(received_frame.ptr, frame);
     frame_print(frame);
     frame_destroy(&received_frame);
     return true;
 }
 
-static void send_to_frontend(FrameHeader* frame) {
+static void frontend_write(FrameHeader* frame) {
     frame_compact(frame);
     frontend_is_connected = writer_write(&writer, frame);
 }
