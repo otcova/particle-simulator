@@ -3,10 +3,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include "log.h"
-#include "particle.h"
-#include "particle_io.h"
-#include "thread_pool.hpp"
+#include "lib/log.hpp"
+#include "lib/thread_pool.hpp"
+#include "particle.cuh"
 
 #define BUCKET_CAPACITY 16
 #define BUCKETS_X 32
@@ -27,21 +26,6 @@ static Device active_device = Device::CpuMainThread;
 
 static ThreadPool pool;
 
-// # Desmos
-// C\ =\ \frac{n}{n-m}\left(\frac{n}{m}\right)^{\frac{m}{n-m}}
-// F\left(r\right)
-// =C\cdot p\cdot\frac{m\left(\frac{s}{r}\right)^{m}-n\left(\frac{s}{r}\right)^{n}}{r}
-// V\left(r\right)
-// =C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
-//
-// Force Zero at:
-// x=s\sqrt[n-m]{\frac{n}{m}}
-//
-// # Wolframalpha
-// Partial[\(40)Power[\(40)Divide[s,x]\(41),n]-Power[\(40)Divide[s,x]\(41),m]\(41) ,x]
-
-constexpr float k_b = 1.380649e-23;
-
 __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, FrameMetadata frame,
                                         uint32_t particle_count, uint32_t i) {
     float2 force = {0, 0};
@@ -51,13 +35,22 @@ __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, Fram
     for (uint32_t j = 0; j < particle_count; ++j) {
         if (j == i) continue;
 
-        float2 f = params.force(src[i], src[j]);
-        force.x += f.x;
-        force.y += f.y;
+        double2 r = d_dist(src[i], src[j], frame);
+        force += params.d2_force(r);
     }
 
-    params.apply_force(dst[i], src[i], force, frame.step_dt);
-    bounce_walls(dst[i], {frame.box_width, frame.box_height});
+    const double u64_max = (double)UINT64_MAX;
+    double2 wall_bottom = {0., (src[i].y / u64_max) * frame.box_height};
+    double2 wall_top = {0., frame.box_height - wall_bottom.y};
+    double2 wall_left = {(src[i].x / u64_max) * frame.box_width, 0.};
+    double2 wall_right = {frame.box_width - wall_left.x, 0.};
+
+    force += params.d2_force(wall_bottom);
+    force += params.d2_force(wall_top);
+    force += params.d2_force(wall_left);
+    force += params.d2_force(wall_right);
+
+    params.f_apply_force(dst[i], src[i], force, frame);
 }
 
 __global__ static void gpu_compact(const Particle* src, Particle* dst, FrameMetadata frame,
@@ -118,14 +111,12 @@ static void kernel_sync(FrameHeader* frame) {
 }
 
 // Convert a list of particles into the data-structure used by the kernel
-static void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
+void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
     // Force Capabilities
     src->metadata.data_structure = DataStructure::CompactArray;
     if (src->metadata.device == Device::Gpu && gpus_count == 0) {
         src->metadata.device = Device::CpuThreadPool;
     }
-    src->metadata.particles[0].epsilon *= k_b;
-    src->metadata.particles[1].epsilon *= k_b;
 
     if (src->metadata.data_structure == DataStructure::CompactArray) {
         frame_compact_into(src, dst);
@@ -162,6 +153,18 @@ static void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
         pool.sync();
     }
     active_device = (Device)dst->metadata.device;
+
+    ParticleParams p(dst->metadata.particles[0]);
+
+    log("--- 0 Dist ---");
+    log("R: %.e", p.d_force0_r());
+    log("Double - Float: %.e", p.d_force0_r() - p.f_force0_r());
+    log("--- Acc ---");
+    log("Float Mie:  %e", p.f_force(p.f_force0_r()) / p.mass);
+    log("Double Mie: %e", p.d_force(p.d_force0_r()) / p.mass);
+    log("Float LJ:   %e", p.f_ljforce(p.f_force0_r()) / p.mass);
+    log("Double LJ:  %e", p.d_ljforce(p.d_force0_r()) / p.mass);
+    log("---");
 }
 
 static void kernel_write(FrameHeader* src, size_t dst_offset) {

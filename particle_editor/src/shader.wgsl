@@ -1,15 +1,16 @@
 const rtx_extra_radius_scale = 1.4;
+const u32_max = f32(0xFFFFFFFFu);
 
 struct Particle {
-    @location(0) pos: vec2f,
-    @location(1) vel: vec2f,
-    @location(2) ty: u32,
+    @location(0) pos: vec2<u32>,
+    @location(1) vel: vec2<f32>,
+    @location(2) ty: i32,
 }
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
-    @location(0) color: vec3f,
-    @location(1) tex_coord: vec2f, // -1 .. 1
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+    @location(1) tex_coord: vec2<f32>, // -1 .. 1
     @location(2) tex_pixel_size: f32,
     @location(3) instance_index: u32,
 }
@@ -64,7 +65,7 @@ fn vertex_shader(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    if particle.ty == 0u {
+    if particle.ty < 0 {
         out.position = vec4f(0., 0., 1., 0.);
         return out;
     }
@@ -72,8 +73,8 @@ fn vertex_shader(
     let box_size = vec2(udata.metadata.box_width, udata.metadata.box_height);
     var particle_size = udata.metadata.particles[0].sigma;
 
-    if particle.ty <= 2u {
-        particle_size = udata.metadata.particles[particle.ty - 1u].sigma;
+    if particle.ty < 2 {
+        particle_size = udata.metadata.particles[particle.ty].sigma;
     }
 
     // Force a minimum particle size
@@ -86,7 +87,8 @@ fn vertex_shader(
 
     let quad_vertex = quad_verticies[vertex_index];
     let relative_speed = log2(1. + length(particle.vel)) / log2(1. + udata.max_speed);
-    var pos = particle.pos + particle.vel * (udata.sim_time - udata.frame_time);
+    let p = (vec2f(particle.pos) / u32_max) * box_size;
+    var pos = p + particle.vel * (udata.sim_time - udata.frame_time);
     let vertex = quad_vertex * particle_size;
 
     out.position = vec4f((pos + vertex) * 2. / box_size - 1., 0., 1.);

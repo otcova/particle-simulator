@@ -1,7 +1,6 @@
-use rand::{Rng, distr::uniform::SampleRange};
-
 use crate::*;
-use core::f32;
+use core::{f32, f64};
+use rand::{Rng, distr::uniform::SampleRange, rngs::ThreadRng};
 use std::ops::RangeInclusive;
 
 pub struct ParticleLattice {
@@ -20,36 +19,29 @@ impl ParticleLattice {
             return;
         }
 
-        // Center x, y
-        let cx = frame.metadata().box_width / 2.;
-        let cy = frame.metadata().box_height / 2.;
+        let meta = *frame.metadata();
 
         // Particle Radius x, y
-        let rx = frame.metadata().particles[0].force0_r() * self.distance_factor;
-        let ry = f32::sin(f32::consts::PI / 3.) * rx;
+        let rx = meta.particles[0].force0_r() * self.distance_factor as f64;
+        let ry = f64::sin(f64::consts::PI / 3.) * rx;
 
-        // Start x, y
-        let sx = cx - rx * (self.particle_count.0 - 1) as f32 / 2.;
-        let sy = cy - ry * (self.particle_count.1 - 1) as f32 / 2.;
+        let center = meta.box_size() / 2.;
+        let start = center
+            - Vec2::new(
+                rx * (self.particle_count.0 - 1) as f64 / 2.,
+                ry * (self.particle_count.1 - 1) as f64 / 2.,
+            );
 
         let rng = &mut rand::rng();
 
         frame.reserve(total_particle_count);
         for idx_x in 0..self.particle_count.0 {
             for idx_y in 0..self.particle_count.1 {
-                let v = self.velocity.clone().sample_single(rng).unwrap_or(0.);
-                let angle = rng.random_range(0.0..2.0 * std::f32::consts::PI);
-                let (ax, ay) = angle.sin_cos();
-
                 let offset = if idx_y % 2 == 0 { 0. } else { rx / 2. };
 
-                frame.push(Particle {
-                    x: sx + rx * idx_x as f32 + offset,
-                    y: sy + ry * idx_y as f32,
-                    vx: v * ax,
-                    vy: v * ay,
-                    ty: 1,
-                });
+                let pos = start + Vec2::new(rx * idx_x as f64 + offset, ry * idx_y as f64);
+                let vel = self.random_vel(rng);
+                frame.push(meta.new_particle(pos, vel, 0));
             }
         }
     }
@@ -60,34 +52,32 @@ impl ParticleLattice {
             return;
         }
 
-        // Center x, y
-        let cx = frame.metadata().box_width / 2.;
-        let cy = frame.metadata().box_height / 2.;
+        let meta = *frame.metadata();
 
-        // Particle Radius x, y
-        let r = frame.metadata().particles[0].force0_r() * self.distance_factor;
-
-        // Start x, y
-        let sx = cx - r * (self.particle_count.0 - 1) as f32 / 2.;
-        let sy = cy - r * (self.particle_count.1 - 1) as f32 / 2.;
+        let center = meta.box_size() / 2.;
+        let r = meta.particles[0].force0_r() * self.distance_factor as f64;
+        let start = center
+            - Vec2::new(
+                (self.particle_count.0 - 1) as f64 / 2.,
+                (self.particle_count.1 - 1) as f64 / 2.,
+            ) * r;
 
         let rng = &mut rand::rng();
 
         frame.reserve(total_particle_count);
         for idx_x in 0..self.particle_count.0 {
             for idx_y in 0..self.particle_count.1 {
-                let v = self.velocity.clone().sample_single(rng).unwrap_or(0.);
-                let angle = rng.random_range(0.0..2.0 * std::f32::consts::PI);
-                let (ax, ay) = angle.sin_cos();
-
-                frame.push(Particle {
-                    x: sx + r * idx_x as f32,
-                    y: sy + r * idx_y as f32,
-                    vx: v * ax,
-                    vy: v * ay,
-                    ty: 1,
-                });
+                let pos = start + Vec2::new(idx_x as f64, idx_y as f64) * r;
+                let vel = self.random_vel(rng);
+                frame.push(meta.new_particle(pos, vel, 0));
             }
         }
+    }
+
+    fn random_vel(&self, rng: &mut ThreadRng) -> Vec2 {
+        let v = self.velocity.clone().sample_single(rng).unwrap_or(0.);
+        let angle = rng.random_range(0.0..2.0 * f32::consts::PI);
+        let dir = Vec2::from(angle.sin_cos());
+        dir * v as f64
     }
 }

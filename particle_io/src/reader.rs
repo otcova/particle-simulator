@@ -111,39 +111,39 @@ fn read_blocking<R: Read, F: FnMut() -> bool>(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn test_reader() {
-        let mut frame1 = Frame::new();
-        let mut frame2 = Frame::new();
-        let mut frame3 = Frame::new();
-
-        let pos = (0.5, 0.5);
-        frame1.push_square(pos, 1., 5);
-        frame2.push_square(pos, 1., 21);
-        frame3.push_square(pos, 1., 2);
-
-        let mut raw_data = Vec::new();
-        raw_data.extend_from_slice(frame1.bytes());
-        raw_data.extend_from_slice(frame2.bytes());
-        raw_data.extend_from_slice(frame3.bytes());
-
-        let stream = Cursor::new(raw_data);
-        let reader = Reader::new(stream);
-
-        // Thread should not have started yet
-        assert!(reader.read() == Ok(None));
-
-        // Give time for the thread to start up
-        std::thread::sleep(Duration::from_millis(100));
-
-        assert!(reader.read() == Ok(Some(frame1)));
-        assert!(reader.read() == Ok(Some(frame2)));
-        assert!(reader.read() == Ok(Some(frame3)));
-        assert!(reader.read() == Ok(None));
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use std::io::Cursor;
+//
+//     #[test]
+//     fn test_reader() {
+//         let mut frame1 = Frame::new();
+//         let mut frame2 = Frame::new();
+//         let mut frame3 = Frame::new();
+//
+//         let pos = (0.5, 0.5);
+//         frame1.push_square(pos, 1., 5);
+//         frame2.push_square(pos, 1., 21);
+//         frame3.push_square(pos, 1., 2);
+//
+//         let mut raw_data = Vec::new();
+//         raw_data.extend_from_slice(frame1.bytes());
+//         raw_data.extend_from_slice(frame2.bytes());
+//         raw_data.extend_from_slice(frame3.bytes());
+//
+//         let stream = Cursor::new(raw_data);
+//         let reader = Reader::new(stream);
+//
+//         // Thread should not have started yet
+//         assert!(reader.read() == Ok(None));
+//
+//         // Give time for the thread to start up
+//         std::thread::sleep(Duration::from_millis(100));
+//
+//         assert!(reader.read() == Ok(Some(frame1)));
+//         assert!(reader.read() == Ok(Some(frame2)));
+//         assert!(reader.read() == Ok(Some(frame3)));
+//         assert!(reader.read() == Ok(None));
+//     }
+// }

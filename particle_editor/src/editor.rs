@@ -520,7 +520,14 @@ impl Editor {
                         ui.end_row();
 
                         ui.label("Ɛ");
-                        ui.add(Slider::new(&mut particle.epsilon, (1.)..=200.).logarithmic(true));
+                        ui.add(
+                            Slider::new(&mut particle.epsilon, 1e-23..=10e-20)
+                                .custom_formatter(|t, _| {
+                                    editor.num_formatter.raw_string(t as f32, "J")
+                                })
+                                .logarithmic(true),
+                        );
+                        // ui.add(Slider::new(&mut particle.epsilon, (1.)..=200.).logarithmic(true));
                         ui.end_row();
 
                         ui.label("n");

@@ -151,24 +151,24 @@ impl Simulation {
         }
     }
 
-    pub fn print(&self, moment: f32) -> Vec<String> {
-        let mut res = Vec::new();
-        res.push(
-            self.times
-                .iter()
-                .map(|t| format!("{:?} | ", t))
-                .collect::<String>(),
-        );
-        if let Some((idx, frame_time)) = self.find_frame_ind(moment) {
-            res.push(format!(
-                "simulation_time: {}  frame_time: {}  frame_idx: {}",
-                moment, frame_time, idx
-            ));
-            res.push((self.frames.len() - 1).min(idx).to_string());
-        } else {
-            res.push("Frame not found".into());
-        };
-
-        res
-    }
+    // pub fn print(&self, moment: f32) -> Vec<String> {
+    //     let mut res = Vec::new();
+    //     res.push(
+    //         self.times
+    //             .iter()
+    //             .map(|t| format!("{:?} | ", t))
+    //             .collect::<String>(),
+    //     );
+    //     if let Some((idx, frame_time)) = self.find_frame_ind(moment) {
+    //         res.push(format!(
+    //             "simulation_time: {}  frame_time: {}  frame_idx: {}",
+    //             moment, frame_time, idx
+    //         ));
+    //         res.push((self.frames.len() - 1).min(idx).to_string());
+    //     } else {
+    //         res.push("Frame not found".into());
+    //     };
+    //
+    //     res
+    // }
 }

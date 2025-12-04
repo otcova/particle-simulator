@@ -1,11 +1,12 @@
-use std::time::Instant;
-
 use crate::wgpu_utils::WgpuContext;
-use particle_io::{Frame, FrameMetadata, Particle};
-use wgpu::{BindGroupLayoutEntry, hal::Rect, util::DeviceExt};
+use bytemuck::{Pod, Zeroable, cast_slice_mut};
+use particle_io::{Frame, FrameMetadata};
+use std::time::Instant;
+use std::{mem::offset_of, num::NonZero};
+use wgpu::{BindGroupLayoutEntry, hal::Rect};
 
 #[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Zeroable, bytemuck::NoUninit)]
+#[derive(Clone, Copy, Default, Zeroable, Pod)]
 pub struct Uniform {
     metadata: FrameMetadata,
     pub rtx: u32,
@@ -15,6 +16,14 @@ pub struct Uniform {
     pub max_speed: f32,
     pixel_size: f32,
     pub min_particle_size: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Zeroable, Pod)]
+pub struct WgpuParticle {
+    pos: [u32; 2],
+    vel: [f32; 2],
+    ty: i32,
 }
 
 pub struct Graphics {
@@ -68,23 +77,23 @@ impl Graphics {
                     module: &shader,
                     entry_point: Some("vertex_shader"),
                     buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Particle>() as wgpu::BufferAddress,
+                        array_stride: std::mem::size_of::<WgpuParticle>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
                             wgpu::VertexAttribute {
                                 shader_location: 0,
-                                offset: 0,
-                                format: wgpu::VertexFormat::Float32x2,
+                                offset: offset_of!(WgpuParticle, pos) as u64,
+                                format: wgpu::VertexFormat::Uint32x2,
                             },
                             wgpu::VertexAttribute {
                                 shader_location: 1,
-                                offset: size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                                offset: offset_of!(WgpuParticle, vel) as u64,
                                 format: wgpu::VertexFormat::Float32x2,
                             },
                             wgpu::VertexAttribute {
                                 shader_location: 2,
-                                offset: size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                                format: wgpu::VertexFormat::Uint32,
+                                offset: offset_of!(WgpuParticle, ty) as u64,
+                                format: wgpu::VertexFormat::Sint32,
                             },
                         ],
                     }],
@@ -237,7 +246,8 @@ impl Graphics {
                 1.,
             );
             // render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
-            render_pass.set_vertex_buffer(0, self.particles_buffer.slice(..));
+            let data_size = size_of::<WgpuParticle>() * frame.particles().len();
+            render_pass.set_vertex_buffer(0, self.particles_buffer.slice(0..data_size as u64));
             render_pass.set_bind_group(0, &self.bind_group, &[]);
             render_pass.draw(0..4, 0..frame.particles().len() as u32);
         }
@@ -254,22 +264,33 @@ impl Graphics {
     }
 
     fn update_particles(&mut self, gpu: &WgpuContext, frame: &Frame) {
-        let data = bytemuck::cast_slice(frame.particles());
+        let data_size = size_of::<WgpuParticle>() * frame.particles().len();
 
-        if data.is_empty() {
+        let Some(data_size) = NonZero::new(data_size as u64) else {
             return;
+        };
+
+        if self.particles_buffer.size() < data_size.into() {
+            self.particles_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Particles buffer"),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                size: data_size.into(),
+                mapped_at_creation: false,
+            });
         }
 
-        if self.particles_buffer.size() != data.len() as wgpu::BufferAddress {
-            self.particles_buffer =
-                gpu.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Particles buffer"),
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                        contents: data,
-                    });
-        } else {
-            gpu.queue.write_buffer(&self.particles_buffer, 0, data);
+        let Some(mut dst_bytes) = gpu
+            .queue
+            .write_buffer_with(&self.particles_buffer, 0, data_size)
+        else {
+            return;
+        };
+
+        let dst: &mut [WgpuParticle] = cast_slice_mut(&mut dst_bytes);
+        for (idx, particle) in frame.particles().iter().enumerate() {
+            dst[idx].pos = particle.pos_u32();
+            dst[idx].vel = particle.vel_f32();
+            dst[idx].ty = particle.ty as i32;
         }
     }
 }

@@ -4,19 +4,27 @@ use bytemuck::{
     Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
 };
 
+pub type Vec2 = vector2d::Vector2D<f64>;
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug, Default)]
 pub struct Particle {
-    pub x: f32,
-    pub y: f32,
+    pub x: u64,
+    pub y: u64,
     pub vx: f32,
     pub vy: f32,
-    pub ty: u32,
+    pub ty: i64,
 }
 
 impl Particle {
     pub fn is_null(self) -> bool {
-        self.ty == 0
+        self.ty < 0
+    }
+    pub fn pos_u32(self) -> [u32; 2] {
+        [(self.x >> 32) as u32, (self.y >> 32) as u32]
+    }
+    pub fn vel_f32(self) -> [f32; 2] {
+        [self.vx, self.vy]
     }
 }
 
@@ -32,8 +40,11 @@ pub struct MiePotentialParams {
 }
 
 impl MiePotentialParams {
-    pub fn force0_r(self) -> f32 {
-        self.sigma * (self.n / self.m).powf(1. / (self.n - self.m))
+    pub fn force0_r(self) -> f64 {
+        let n = self.n as f64;
+        let m = self.m as f64;
+        let sigma = self.sigma as f64;
+        sigma * (n / m).powf(1. / (n - m))
     }
 }
 
@@ -113,6 +124,8 @@ pub struct FrameMetadata {
 
 impl Default for FrameMetadata {
     fn default() -> FrameMetadata {
+        let k_b = 1.380649e-23;
+
         FrameMetadata {
             step_dt: 1e-15,
             steps_per_frame: 10_000,
@@ -124,14 +137,14 @@ impl Default for FrameMetadata {
                 MiePotentialParams {
                     // Nitrogen
                     sigma: 3.609e-10,
-                    epsilon: 105.79, // TODO: units
+                    epsilon: 105.79 * k_b,
                     n: 14.08,
                     m: 6.,
                 },
                 MiePotentialParams {
                     // Argon
                     sigma: 3.404e-10,
-                    epsilon: 117.84, // TODO: units
+                    epsilon: 117.84 * k_b,
                     n: 12.085,
                     m: 6.,
                 },
@@ -142,6 +155,22 @@ impl Default for FrameMetadata {
 }
 
 impl FrameMetadata {
+    pub fn new_particle(&self, pos: impl Into<Vec2>, vel: impl Into<Vec2>, ty: i64) -> Particle {
+        let pos = pos.into();
+        let vel = vel.into();
+        Particle {
+            x: (u64::MAX as f64 * pos.x / self.box_width as f64) as u64,
+            y: (u64::MAX as f64 * pos.y / self.box_height as f64) as u64,
+            vx: vel.x as f32,
+            vy: vel.y as f32,
+            ty,
+        }
+    }
+
+    pub fn box_size(&self) -> Vec2 {
+        Vec2::new(self.box_width as f64, self.box_height as f64)
+    }
+
     pub fn frame_dt(&self) -> f32 {
         self.step_dt * self.steps_per_frame as f32
     }
@@ -157,6 +186,7 @@ pub struct FrameHeader {
     pub particles_count: u32,
     pub metadata: FrameMetadata,
     signature_end: [u8; 4],
+    _padding: u32,
 
     // This forces `FrameHeader` to have the needed
     // padding and alignment to be followed by a Particle array.
@@ -187,6 +217,7 @@ impl FrameHeader {
             particles_count,
             metadata,
             signature_end: Self::SIGNATURE_END,
+            _padding: 0,
             particles: [],
         }
     }
@@ -226,8 +257,13 @@ impl Display for Frame {
             for (i, p) in self.particles().iter().enumerate().take(5) {
                 writeln!(
                     f,
-                    "    [{}] = {{ x={}, y={}, vx={}, vy={}, ty={} }}",
-                    i, p.x, p.y, p.vx, p.vy, p.ty
+                    "    [{}] = {{ x={:.2}%, y={:.2}%, vx={}, vy={}, ty={} }}",
+                    i,
+                    100. * p.x as f64 / u64::MAX as f64,
+                    100. * p.y as f64 / u64::MAX as f64,
+                    p.vx,
+                    p.vy,
+                    p.ty
                 )?;
             }
             if self.particles().len() > 5 {

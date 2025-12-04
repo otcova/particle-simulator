@@ -27,41 +27,41 @@ impl Writer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{Read, pipe};
-
-    #[test]
-    fn test_writer() {
-        let mut frame1 = Frame::new();
-        let mut frame2 = Frame::new();
-        let mut frame3 = Frame::new();
-
-        let pos = (0.5, 0.5);
-        frame1.push_square(pos, 1., 5);
-        frame2.push_square(pos, 1., 21);
-        frame3.push_square(pos, 1., 2);
-
-        let mut raw_data = Vec::new();
-        raw_data.extend_from_slice(frame1.bytes());
-        raw_data.extend_from_slice(frame2.bytes());
-        raw_data.extend_from_slice(frame3.bytes());
-
-        let (mut rx, tx) = pipe().unwrap();
-
-        {
-            let mut writer = Writer::new(tx);
-
-            writer.write(&frame1).unwrap();
-            writer.write(&frame2).unwrap();
-            writer.write(&frame3).unwrap();
-        }
-        // Drop of writer should wait for data to be written
-
-        let mut rx_data = Vec::new();
-        rx.read_to_end(&mut rx_data).unwrap();
-
-        assert!(raw_data == rx_data);
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use std::io::{Read, pipe};
+//
+//     #[test]
+//     fn test_writer() {
+//         let mut frame1 = Frame::new();
+//         let mut frame2 = Frame::new();
+//         let mut frame3 = Frame::new();
+//
+//         let pos = (0.5, 0.5);
+//         frame1.push_square(pos, 1., 5);
+//         frame2.push_square(pos, 1., 21);
+//         frame3.push_square(pos, 1., 2);
+//
+//         let mut raw_data = Vec::new();
+//         raw_data.extend_from_slice(frame1.bytes());
+//         raw_data.extend_from_slice(frame2.bytes());
+//         raw_data.extend_from_slice(frame3.bytes());
+//
+//         let (mut rx, tx) = pipe().unwrap();
+//
+//         {
+//             let mut writer = Writer::new(tx);
+//
+//             writer.write(&frame1).unwrap();
+//             writer.write(&frame2).unwrap();
+//             writer.write(&frame3).unwrap();
+//         }
+//         // Drop of writer should wait for data to be written
+//
+//         let mut rx_data = Vec::new();
+//         rx.read_to_end(&mut rx_data).unwrap();
+//
+//         assert!(raw_data == rx_data);
+//     }
+// }

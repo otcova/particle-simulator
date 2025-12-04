@@ -22,6 +22,12 @@ build: build/cuda_simulator
 .PHONY: debug
 debug: build/cuda_simulator_debug
 
+.PHONY: run
+run:
+	@if command -v cargo >/dev/null 2>/dev/null; then cargo build -p particle_io_c --release; fi
+	make build
+	./build/cuda_simulator
+
 .PHONY: clean
 clean:
 	rm -r build

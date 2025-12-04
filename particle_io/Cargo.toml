@@ -7,3 +7,4 @@ rust-version = "1.91"
 [dependencies]
 bytemuck = { version = "1.24", features = ["derive"] }
 rand = "0.9"
+vector2d = "3.1"

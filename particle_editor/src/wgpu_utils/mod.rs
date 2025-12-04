@@ -53,7 +53,12 @@ impl WgpuContext {
         );
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features {
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
             .await
             .unwrap();
 

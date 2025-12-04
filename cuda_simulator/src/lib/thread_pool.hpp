@@ -24,7 +24,7 @@ struct Barrier {
         : size(s), remaining(s), completion(std::move(f)) {}
 
     void arrive_and_wait() {
-        std::unique_lock lk(m);
+        std::unique_lock<std::mutex> lk(m);
         --remaining;
         if (remaining != 0) {
             auto myphase = phase + 1;
@@ -50,14 +50,15 @@ class ThreadPool {
 
     ~ThreadPool() {
         {
-            std::unique_lock lk(mtx);
+            std::unique_lock<std::shared_mutex> lk(mtx);
             shutdown = true;
         }
         cv.notify_all();
         for (auto& t : workers) t.join();
     }
 
-    void run(size_t n, std::function<void(size_t)> f) {
+    template <typename F>
+    void run(size_t n, F f) {
         size_t divisions = workers.size() * 8;
         size_t block_size = (n + divisions + 1) / divisions;
         if (block_size == 0) block_size = 1;
@@ -65,9 +66,10 @@ class ThreadPool {
         run(n, block_size, f);
     }
 
-    void run(size_t n, size_t block_size, std::function<void(size_t)> f) {
+    template <typename F>
+    void run(size_t n, size_t block_size, F f) {
         {
-            std::unique_lock lk(mtx);
+            std::unique_lock<std::shared_mutex> lk(mtx);
             tasks.push({n, block_size, std::move(f)});
             if (tasks.size() == 1) {
                 task_index.store(workers.size() * block_size, std::memory_order_relaxed);
@@ -77,7 +79,7 @@ class ThreadPool {
     }
 
     void sync() {
-        std::unique_lock lk(mtx);
+        std::unique_lock<std::shared_mutex> lk(mtx);
         cv.wait(lk, [this] { return tasks.empty(); });
     }
 
@@ -101,7 +103,7 @@ class ThreadPool {
         Task task;
         while (true) {
             {
-                std::shared_lock lk(mtx);
+                std::shared_lock<std::shared_mutex> lk(mtx);
                 cv.wait(lk, [this] { return !tasks.empty() || shutdown; });
                 if (shutdown) break;
                 task = tasks.front();
@@ -129,7 +131,7 @@ class ThreadPool {
         bool is_empty;
 
         {
-            std::unique_lock lk(mtx);
+            std::unique_lock<std::shared_mutex> lk(mtx);
             tasks.pop();
             is_empty = tasks.empty();
             if (!is_empty) {
