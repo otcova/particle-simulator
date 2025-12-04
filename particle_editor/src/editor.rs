@@ -628,7 +628,7 @@ impl Editor {
                 );
                 ui.end_row();
 
-                ui.label("Using GPU");
+                ui.label("Using Device");
                 ui.label(
                     particle_io::Device::try_from(metadata.device)
                         .map(|s| s.name())

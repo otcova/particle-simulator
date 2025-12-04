@@ -36,6 +36,14 @@ __host__ __device__ double2 d_dist(Particle a, Particle b, const FrameMetadata& 
     return {(dx / max) * frame.box_width, (dy / max) * frame.box_height};
 }
 
+__host__ __device__ float2 f_dist(Particle a, Particle b, const FrameMetadata& frame) {
+    float dx = a.x < b.x ? float(b.x - a.x) : -float(a.x - b.x);
+    float dy = a.y < b.y ? float(b.y - a.y) : -float(a.y - b.y);
+
+    float max = (float)UINT64_MAX;
+    return {(dx / max) * frame.box_width, (dy / max) * frame.box_height};
+}
+
 struct ParticleParams : MiePotentialParams {
     float C;
     double dC;

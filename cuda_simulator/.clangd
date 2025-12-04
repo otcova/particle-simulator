@@ -1,7 +1,8 @@
 CompileFlags:
-  Add:
-    - "-xcuda"
-    - "-std=c++17"
-    - "-stdlib=libc++"
-    - "-I../../particle_io/c_api/include/"
-    - "-I/usr/local/cuda/include"
+    Add:
+        - "-xcuda"
+        - "-std=c++17"
+        - "-stdlib=libc++"
+        - "-I../../particle_io/c_api/include/"
+        - "-I/usr/local/cuda/include"
+        - "-I/opt/cuda/include"

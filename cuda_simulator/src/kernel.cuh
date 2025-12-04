@@ -6,6 +6,7 @@
 #include "lib/log.hpp"
 #include "lib/thread_pool.hpp"
 #include "particle.cuh"
+#include "particle_io.h"
 
 #define BUCKET_CAPACITY 16
 #define BUCKETS_X 32
@@ -35,20 +36,20 @@ __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, Fram
     for (uint32_t j = 0; j < particle_count; ++j) {
         if (j == i) continue;
 
-        double2 r = d_dist(src[i], src[j], frame);
-        force += params.d2_force(r);
+        float2 r = f_dist(src[i], src[j], frame);
+        force += params.f2_force(r);
     }
 
-    const double u64_max = (double)UINT64_MAX;
-    double2 wall_bottom = {0., (src[i].y / u64_max) * frame.box_height};
-    double2 wall_top = {0., frame.box_height - wall_bottom.y};
-    double2 wall_left = {(src[i].x / u64_max) * frame.box_width, 0.};
-    double2 wall_right = {frame.box_width - wall_left.x, 0.};
+    const float u64_max = (float)UINT64_MAX;
+    float2 wall_bottom = {0., (src[i].y / u64_max) * frame.box_height};
+    float2 wall_top = {0., frame.box_height - wall_bottom.y};
+    float2 wall_left = {(src[i].x / u64_max) * frame.box_width, 0.};
+    float2 wall_right = {frame.box_width - wall_left.x, 0.};
 
-    force += params.d2_force(wall_bottom);
-    force += params.d2_force(wall_top);
-    force += params.d2_force(wall_left);
-    force += params.d2_force(wall_right);
+    force += params.f2_force(wall_bottom);
+    force += params.f2_force(wall_top);
+    force += params.f2_force(wall_left);
+    force += params.f2_force(wall_right);
 
     params.f_apply_force(dst[i], src[i], force, frame);
 }
@@ -118,8 +119,11 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
         src->metadata.device = Device::CpuThreadPool;
     }
 
+    dst->particles_count = MAX_PARTICLE_COUNT;
+
     if (src->metadata.data_structure == DataStructure::CompactArray) {
         frame_compact_into(src, dst);
+        //memcpy(dst, src, packet_size(src->particles_count));
     } else if (src->metadata.data_structure == DataStructure::MatrixBuckets) {
         // // Bucket Matrix
         // uint32_t bucket_len[BUCKETS_X * BUCKETS_Y];
