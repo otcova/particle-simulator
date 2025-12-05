@@ -96,7 +96,7 @@ struct ParticleParams : MiePotentialParams {
     }
 
     __host__ __device__ void f_apply_force(Particle& dst, Particle src, float2 force,
-                                           const FrameMetadata& frame) const {
+            const FrameMetadata& frame) const {
         float ax = force.x / mass;
         float ay = force.y / mass;
 
@@ -109,10 +109,24 @@ struct ParticleParams : MiePotentialParams {
         float dy = dst.vy * frame.step_dt;
 
         float u32_max = (float)UINT32_MAX;
-        dst.x = src.x + (uint32_t)roundf((dx / frame.box_width) * u32_max);
-        dst.y = src.y + (uint32_t)roundf((dy / frame.box_height) * u32_max);
+        dst.x = src.x + (uint32_t)(int64_t)roundf((dx / frame.box_width) * u32_max);
+        dst.y = src.y + (uint32_t)(int64_t)roundf((dy / frame.box_height) * u32_max);
 
         dst.ty = src.ty;
+    }
+
+    __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const  {
+        const float max = (float)UINT32_MAX;
+        float2 wall_bottom = {0., (p.y / max) * frame.box_height};
+        float2 wall_top = {0., frame.box_height - wall_bottom.y};
+        float2 wall_left = {(p.x / max) * frame.box_width, 0.};
+        float2 wall_right = {frame.box_width - wall_left.x, 0.};
+
+        float2 force = f2_force(wall_bottom);
+        force += f2_force(wall_top);
+        force += f2_force(wall_left);
+        force += f2_force(wall_right);
+        return force;
     }
 
     float f_force0_r() {
