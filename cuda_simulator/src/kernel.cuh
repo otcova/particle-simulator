@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <cstdint>
 #include "lib/log.hpp"
 #include "lib/thread_pool.hpp"
 #include "particle.cuh"
@@ -40,10 +42,10 @@ __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, Fram
         force += params.f2_force(r);
     }
 
-    const float u64_max = (float)UINT64_MAX;
-    float2 wall_bottom = {0., (src[i].y / u64_max) * frame.box_height};
+    const float max = (float)UINT32_MAX;
+    float2 wall_bottom = {0., (src[i].y / max) * frame.box_height};
     float2 wall_top = {0., frame.box_height - wall_bottom.y};
-    float2 wall_left = {(src[i].x / u64_max) * frame.box_width, 0.};
+    float2 wall_left = {(src[i].x / max) * frame.box_width, 0.};
     float2 wall_right = {frame.box_width - wall_left.x, 0.};
 
     force += params.f2_force(wall_bottom);
@@ -119,11 +121,9 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
         src->metadata.device = Device::CpuThreadPool;
     }
 
-    dst->particles_count = MAX_PARTICLE_COUNT;
-
     if (src->metadata.data_structure == DataStructure::CompactArray) {
+        dst->particles_count = MAX_PARTICLE_COUNT;  // dst capacity
         frame_compact_into(src, dst);
-        //memcpy(dst, src, packet_size(src->particles_count));
     } else if (src->metadata.data_structure == DataStructure::MatrixBuckets) {
         // // Bucket Matrix
         // uint32_t bucket_len[BUCKETS_X * BUCKETS_Y];
@@ -161,13 +161,43 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
     ParticleParams p(dst->metadata.particles[0]);
 
     log("--- 0 Dist ---");
-    log("R: %.e", p.d_force0_r());
-    log("Double - Float: %.e", p.d_force0_r() - p.f_force0_r());
+
+    double box_size = frame->metadata.box_width;
+    double r0 = p.d_force0_r();
+    const double u32_max = (double)UINT32_MAX;
+    const double u64_max = (double)UINT64_MAX;
+
+    double d_r = (r0 + box_size) - box_size;
+    float f_r = ((float)r0 + (float)box_size) - (float)box_size;
+
+    uint32_t u32_r = round((r0 / box_size) * u32_max);
+    double d32_r = box_size * (double(u32_r) / u32_max);
+
+    uint64_t u64_r = round((r0 / box_size) * u64_max);
+    double d64_r = box_size * (double(u64_r) / u64_max);
+
+    log("Ideal Float:  %.15e", (float)r0);
+    log("Ideal Double: %.15e\n", r0);
+
+    log("Box   Float:  %.15e", f_r);
+    log("u32   Float:  %.15e", (float)d32_r);
+    log("u32   Double: %.15e", d32_r);
+    log("Box   Double: %.15e", d_r);
+    log("u64   Double: %.15e", d64_r);
+
     log("--- Acc ---");
-    log("Float Mie:  %e", p.f_force(p.f_force0_r()) / p.mass);
-    log("Double Mie: %e", p.d_force(p.d_force0_r()) / p.mass);
-    log("Float LJ:   %e", p.f_ljforce(p.f_force0_r()) / p.mass);
-    log("Double LJ:  %e", p.d_ljforce(p.d_force0_r()) / p.mass);
+
+    log("Ideal Float  Mie: %+e", p.f_force(r0) / p.mass);
+    log("Ideal Double Mie: %+e\n", p.d_force(r0) / p.mass);
+
+    log("Box   Float  Mie: %+e", p.f_force(f_r) / p.mass);
+    log("u32   Float  Mie: %+e", p.f_force(d32_r) / p.mass);
+    log("u64   Float  Mie: %+e", p.f_force(d64_r) / p.mass);
+    log("u32   Double Mie: %+e", p.d_force(d32_r) / p.mass);
+    log("Box   Double Mie: %+e", p.d_force(d_r) / p.mass);
+    log("u64   Double Mie: %+e", p.d_force(d64_r) / p.mass);
+    // log("Float LJ:   %e", p.f_ljforce(f_r) / p.mass);
+    // log("Double LJ:  %e", p.d_ljforce(d_r) / p.mass);
     log("---");
 }
 

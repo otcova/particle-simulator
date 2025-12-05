@@ -32,7 +32,7 @@ __host__ __device__ double2 d_dist(Particle a, Particle b, const FrameMetadata& 
     double dx = a.x < b.x ? double(b.x - a.x) : -double(a.x - b.x);
     double dy = a.y < b.y ? double(b.y - a.y) : -double(a.y - b.y);
 
-    double max = (double)UINT64_MAX;
+    const double max = (double)UINT32_MAX;
     return {(dx / max) * frame.box_width, (dy / max) * frame.box_height};
 }
 
@@ -40,25 +40,22 @@ __host__ __device__ float2 f_dist(Particle a, Particle b, const FrameMetadata& f
     float dx = a.x < b.x ? float(b.x - a.x) : -float(a.x - b.x);
     float dy = a.y < b.y ? float(b.y - a.y) : -float(a.y - b.y);
 
-    float max = (float)UINT64_MAX;
+    const float max = (float)UINT32_MAX;
     return {(dx / max) * frame.box_width, (dy / max) * frame.box_height};
 }
 
 struct ParticleParams : MiePotentialParams {
     float C;
-    double dC;
     float mass = 6.63352599e-26;
 
     __host__ __device__ ParticleParams(MiePotentialParams p) : MiePotentialParams(p) {
-        double dn = n, dm = m;
-        dC = (dn / (dn - dm)) * pow(dn / dm, dm / (dn - dm));
-        C = (float)dC;
+        C = (n / (n - m)) * powf(n / m, m / (n - m));
     }
 
-    __host__ __device__ double d_force(double r) const {
-        double depsilon = epsilon, dm = m, dn = n;
+    __host__ __device__ float d_force(double r) const {
+        double dm = m, dn = n;
         double sr = (double)sigma / r;
-        return dC * depsilon * (dm * pow(sr, dm) - dn * pow(sr, dn)) / r;
+        return C * epsilon * float(dm * pow(sr, dm) - dn * pow(sr, dn)) / (float)r;
     }
 
     __host__ __device__ float f_force(float r) const {
@@ -84,7 +81,7 @@ struct ParticleParams : MiePotentialParams {
 
     __host__ __device__ float2 d2_force(double2 r) const {
         double len = hypot(r.x, r.y);
-        double f = d_force(len);
+        float f = d_force(len);
 
         f /= len;  // Normalize vector r
         return make_float2(f * r.x, f * r.y);
@@ -111,9 +108,9 @@ struct ParticleParams : MiePotentialParams {
         float dx = dst.vx * frame.step_dt;
         float dy = dst.vy * frame.step_dt;
 
-        float max = (float)UINT64_MAX;
-        dst.x = src.x + uint64_t((dx / frame.box_width) * max);
-        dst.y = src.y + uint64_t((dy / frame.box_height) * max);
+        float u32_max = (float)UINT32_MAX;
+        dst.x = src.x + (uint32_t)roundf((dx / frame.box_width) * u32_max);
+        dst.y = src.y + (uint32_t)roundf((dy / frame.box_height) * u32_max);
 
         dst.ty = src.ty;
     }

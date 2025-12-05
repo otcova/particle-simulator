@@ -1,6 +1,6 @@
 use crate::wgpu_utils::WgpuContext;
-use bytemuck::{Pod, Zeroable, cast_slice_mut};
-use particle_io::{Frame, FrameMetadata};
+use bytemuck::{Pod, Zeroable, cast_slice};
+use particle_io::{Frame, FrameMetadata, Particle};
 use std::time::Instant;
 use std::{mem::offset_of, num::NonZero};
 use wgpu::{BindGroupLayoutEntry, hal::Rect};
@@ -18,24 +18,41 @@ pub struct Uniform {
     pub min_particle_size: f32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Default, Zeroable, Pod)]
-pub struct WgpuParticle {
-    pos: [u32; 2],
-    vel: [f32; 2],
-    ty: i32,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BlendType {
+    Over,
+    Add,
+}
+
+impl BlendType {
+    pub fn name(self) -> &'static str {
+        match self {
+            BlendType::Over => "Over",
+            BlendType::Add => "Add",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct PipelineConfig {
+    pub blend: BlendType,
 }
 
 pub struct Graphics {
     pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
     bind_group: wgpu::BindGroup,
-    pub background_color: [u8; 3],
 
     particles_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
-    pub uniform: Uniform,
 
     start_instant: Instant,
+
+    pub uniform: Uniform,
+    pub background_color: [u8; 3],
+    pub pipeline_config: PipelineConfig,
+    old_pipeline_config: PipelineConfig,
 }
 
 impl Graphics {
@@ -68,79 +85,9 @@ impl Graphics {
             .device
             .create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
-        let pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Render Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vertex_shader"),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<WgpuParticle>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                shader_location: 0,
-                                offset: offset_of!(WgpuParticle, pos) as u64,
-                                format: wgpu::VertexFormat::Uint32x2,
-                            },
-                            wgpu::VertexAttribute {
-                                shader_location: 1,
-                                offset: offset_of!(WgpuParticle, vel) as u64,
-                                format: wgpu::VertexFormat::Float32x2,
-                            },
-                            wgpu::VertexAttribute {
-                                shader_location: 2,
-                                offset: offset_of!(WgpuParticle, ty) as u64,
-                                format: wgpu::VertexFormat::Sint32,
-                            },
-                        ],
-                    }],
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[],
-                        zero_initialize_workgroup_memory: false,
-                    },
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fragment_shader"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: gpu.surface_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        // blend: Some(wgpu::BlendState {
-                        //     color: wgpu::BlendComponent {
-                        //         src_factor: wgpu::BlendFactor::One,
-                        //         dst_factor: wgpu::BlendFactor::One,
-                        //         operation: wgpu::BlendOperation::Add,
-                        //     },
-                        //     alpha: wgpu::BlendComponent::OVER,
-                        // }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[],
-                        zero_initialize_workgroup_memory: false,
-                    },
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None, //Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            });
+        let pipeline_config = PipelineConfig {
+            blend: BlendType::Over,
+        };
 
         let particles_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particles buffer"),
@@ -173,16 +120,112 @@ impl Graphics {
         };
 
         Self {
-            pipeline,
+            pipeline: Self::create_pipeline(gpu, &pipeline_layout, &shader, &pipeline_config),
+            pipeline_layout,
+            shader,
             bind_group,
-            background_color: [5, 20, 40],
 
             particles_buffer,
             uniform_buffer,
-            uniform,
 
             start_instant: Instant::now(),
+
+            background_color: [5, 20, 40],
+            uniform,
+            pipeline_config,
+            old_pipeline_config: pipeline_config,
         }
+    }
+
+    fn create_pipeline(
+        gpu: &WgpuContext,
+        layout: &wgpu::PipelineLayout,
+        shader: &wgpu::ShaderModule,
+        config: &PipelineConfig,
+    ) -> wgpu::RenderPipeline {
+        gpu.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vertex_shader"),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Particle>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                shader_location: 0,
+                                offset: offset_of!(Particle, x) as u64,
+                                format: wgpu::VertexFormat::Uint32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                shader_location: 1,
+                                offset: offset_of!(Particle, vx) as u64,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                shader_location: 2,
+                                offset: offset_of!(Particle, ty) as u64,
+                                format: wgpu::VertexFormat::Sint32,
+                            },
+                        ],
+                    }],
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[],
+                        zero_initialize_workgroup_memory: false,
+                    },
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fragment_shader"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.surface_format,
+                        blend: match config.blend {
+                            BlendType::Over => Some(wgpu::BlendState::ALPHA_BLENDING),
+                            BlendType::Add => Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent::OVER,
+                            }),
+                        },
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[],
+                        zero_initialize_workgroup_memory: false,
+                    },
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None, //Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            })
+    }
+
+    fn update_pipeline(&mut self, gpu: &WgpuContext) {
+        self.pipeline = Self::create_pipeline(
+            gpu,
+            &self.pipeline_layout,
+            &self.shader,
+            &self.pipeline_config,
+        );
     }
 
     pub fn canvas_size(
@@ -211,6 +254,11 @@ impl Graphics {
         frame: &Frame,
         rect: Rect<u32>,
     ) {
+        if self.pipeline_config != self.old_pipeline_config {
+            self.old_pipeline_config = self.pipeline_config;
+            self.update_pipeline(gpu);
+        }
+
         self.update_particles(gpu, frame);
         self.update_uniform(gpu, frame, rect.clone());
 
@@ -246,7 +294,7 @@ impl Graphics {
                 1.,
             );
             // render_pass.set_scissor_rect(rect.x, rect.y, rect.w, rect.h);
-            let data_size = size_of::<WgpuParticle>() * frame.particles().len();
+            let data_size = size_of_val(frame.particles());
             render_pass.set_vertex_buffer(0, self.particles_buffer.slice(0..data_size as u64));
             render_pass.set_bind_group(0, &self.bind_group, &[]);
             render_pass.draw(0..4, 0..frame.particles().len() as u32);
@@ -264,7 +312,7 @@ impl Graphics {
     }
 
     fn update_particles(&mut self, gpu: &WgpuContext, frame: &Frame) {
-        let data_size = size_of::<WgpuParticle>() * frame.particles().len();
+        let data_size = size_of_val(frame.particles());
 
         let Some(data_size) = NonZero::new(data_size as u64) else {
             return;
@@ -279,18 +327,7 @@ impl Graphics {
             });
         }
 
-        let Some(mut dst_bytes) = gpu
-            .queue
-            .write_buffer_with(&self.particles_buffer, 0, data_size)
-        else {
-            return;
-        };
-
-        let dst: &mut [WgpuParticle] = cast_slice_mut(&mut dst_bytes);
-        for (idx, particle) in frame.particles().iter().enumerate() {
-            dst[idx].pos = particle.pos_u32();
-            dst[idx].vel = particle.vel_f32();
-            dst[idx].ty = particle.ty as i32;
-        }
+        let bytes = cast_slice(frame.particles());
+        gpu.queue.write_buffer(&self.particles_buffer, 0, bytes);
     }
 }

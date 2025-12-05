@@ -15,7 +15,7 @@ use winit::{
 use crate::{
     backend::Backend,
     egui_utils::{EguiContext, NumFormat, NumFormatter, rect_from_pixels},
-    graphics::Graphics,
+    graphics::{BlendType, Graphics},
     simulation::{Simulation, TimelineFrame},
     wgpu_utils::WgpuContext,
 };
@@ -67,7 +67,7 @@ impl Editor {
             },
 
             lattice: ParticleLattice {
-                particle_count: (5, 5),
+                particle_count: (10, 10),
                 distance_factor: 1.,
                 velocity: 1.0..=10.0,
             },
@@ -78,7 +78,7 @@ impl Editor {
 
             // play related
             play_time: 0.,
-            play_speed: 10e-12,
+            play_speed: 1e-9,
             auto_play: false,
             loop_play: false,
         };
@@ -403,11 +403,11 @@ impl Editor {
                             let mut max_vel = *editor.lattice.velocity.end();
 
                             ui.label("Min velocity");
-                            ui.add(DragValue::new(&mut min_vel).range(0.0..=100.0).speed(0.1));
+                            ui.add(DragValue::new(&mut min_vel).range(0.0..=1000.0).speed(0.1));
                             ui.end_row();
 
                             ui.label("Max velocity");
-                            ui.add(DragValue::new(&mut max_vel).range(0.0..=100.0).speed(0.1));
+                            ui.add(DragValue::new(&mut max_vel).range(0.0..=1000.0).speed(0.1));
                             ui.end_row();
 
                             editor.lattice.velocity = min_vel..=max_vel;
@@ -716,6 +716,17 @@ impl Editor {
                         ui.selectable_value(rtx, 0, rtx_names[0]);
                         ui.selectable_value(rtx, 1, rtx_names[1]);
                         ui.selectable_value(rtx, 2, rtx_names[2]);
+                    });
+                ui.end_row();
+
+                ui.label("Blend");
+                ComboBox::from_id_salt("Blend")
+                    .selected_text(editor.graphics.pipeline_config.blend.name())
+                    .show_ui(ui, |ui| {
+                        let blend = &mut editor.graphics.pipeline_config.blend;
+                        use BlendType::*;
+                        ui.selectable_value(blend, Over, Over.name());
+                        ui.selectable_value(blend, Add, Add.name());
                     });
                 ui.end_row();
 

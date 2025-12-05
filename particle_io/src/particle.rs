@@ -9,11 +9,11 @@ pub type Vec2 = vector2d::Vector2D<f64>;
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug, Default)]
 pub struct Particle {
-    pub x: u64,
-    pub y: u64,
+    pub x: u32,
+    pub y: u32,
     pub vx: f32,
     pub vy: f32,
-    pub ty: i64,
+    pub ty: i32,
 }
 
 impl Particle {
@@ -21,7 +21,7 @@ impl Particle {
         self.ty < 0
     }
     pub fn pos_u32(self) -> [u32; 2] {
-        [(self.x >> 32) as u32, (self.y >> 32) as u32]
+        [self.x, self.y]
     }
     pub fn vel_f32(self) -> [f32; 2] {
         [self.vx, self.vy]
@@ -127,8 +127,8 @@ impl Default for FrameMetadata {
         let k_b = 1.380649e-23;
 
         FrameMetadata {
-            step_dt: 1e-15,
-            steps_per_frame: 10_000,
+            step_dt: 50e-15,
+            steps_per_frame: 1_000,
             box_width: 50e-9,
             box_height: 50e-9,
             data_structure: DataStructure::MatrixBuckets as u32,
@@ -155,12 +155,12 @@ impl Default for FrameMetadata {
 }
 
 impl FrameMetadata {
-    pub fn new_particle(&self, pos: impl Into<Vec2>, vel: impl Into<Vec2>, ty: i64) -> Particle {
+    pub fn new_particle(&self, pos: impl Into<Vec2>, vel: impl Into<Vec2>, ty: i32) -> Particle {
         let pos = pos.into();
         let vel = vel.into();
         Particle {
-            x: (u64::MAX as f64 * pos.x / self.box_width as f64) as u64,
-            y: (u64::MAX as f64 * pos.y / self.box_height as f64) as u64,
+            x: (u32::MAX as f64 * pos.x / self.box_width as f64).round() as u32,
+            y: (u32::MAX as f64 * pos.y / self.box_height as f64).round() as u32,
             vx: vel.x as f32,
             vy: vel.y as f32,
             ty,
