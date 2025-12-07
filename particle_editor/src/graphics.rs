@@ -5,17 +5,26 @@ use std::time::Instant;
 use std::{mem::offset_of, num::NonZero};
 use wgpu::{BindGroupLayoutEntry, hal::Rect};
 
+mod wgsl {
+    use bytemuck::{Pod, Zeroable};
+
+    #[repr(C, align(16))]
+    #[derive(Clone, Copy, Default, Zeroable, Pod)]
+    pub struct AlignVec3;
+}
+
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Default, Zeroable, Pod)]
 pub struct Uniform {
     metadata: FrameMetadata,
+    _align: wgsl::AlignVec3,
     subtract_color: [f32; 3],
-    pub rtx: u32,
+    pixel_size: f32,
     real_time: f32,
+    pub rtx: u32,
     pub frame_time: f32,
     pub simulation_time: f32,
     pub max_speed: f32,
-    pixel_size: f32,
     pub min_particle_size: f32,
     _padding: [u32; 2],
 }

@@ -1,6 +1,4 @@
-#include <stdlib.h>
-#include <string.h>
-#include <threads.h>
+#include <thread>
 #include "kernel.cuh"
 #include "lib/frontend.hpp"
 
@@ -44,7 +42,7 @@ int main() {
 
     // Wait for first frame
     while (!frontend.read(frame) && frontend.is_connected) {
-        thrd_yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     main_loop();

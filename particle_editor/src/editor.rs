@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use egui::{
-    CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
-    Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
+    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key,
+    KeyboardShortcut, Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Stroke, Vec2,
+    WidgetText,
 };
 use particle_io::{Frame, FrameMetadata, ParticleLattice};
 use winit::{
@@ -31,6 +32,7 @@ pub struct Editor {
     floating_windows: bool,
     close_window: bool,
     interpolation: Interpolation,
+    cursor_stroke: bool,
 
     num_formatter: NumFormatter,
 
@@ -59,6 +61,7 @@ impl Editor {
             floating_windows: false,
             close_window: false,
             interpolation: Interpolation::None,
+            cursor_stroke: false,
 
             num_formatter: NumFormatter {
                 figures: 3,
@@ -224,7 +227,27 @@ impl Editor {
 
         self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
 
-        let fill = Color32::from_black_alpha(100);
+        if let (Some(mouse), down) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()))
+        {
+            let stroke = Stroke::new(1., Color32::from_white_alpha(50));
+            let fill = Color32::from_white_alpha(50);
+
+            let max_size = f32::max(inner.width(), inner.height());
+            let radius = self.sim_params.cursor_size * max_size / 2.;
+
+            if down {
+                ui.painter().circle(mouse, radius, fill, stroke);
+            } else if self.cursor_stroke {
+                ui.painter().circle_stroke(mouse, radius, stroke);
+            }
+        }
+
+        let fill = Color32::from_rgb(
+            self.graphics.background_color[0] / 2,
+            self.graphics.background_color[1] / 2,
+            self.graphics.background_color[2] / 2,
+        );
+
         ui.painter().rect_filled(
             Rect::from_min_max(outter.min, Pos2::new(inner.min.x, inner.max.y)),
             0,
@@ -448,6 +471,14 @@ impl Editor {
                 ui.label("Frame delta time");
                 let frame_dt = params.step_dt * params.steps_per_frame as f32;
                 ui.label(editor.num(frame_dt, "s"));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Cursor Size");
+                let mut size = params.cursor_size * 100.;
+                ui.add(Slider::new(&mut size, 0.0..=100.0).suffix("%"));
+                params.cursor_size = size / 100.;
                 ui.end_row();
 
                 ui.end_row();
@@ -684,6 +715,10 @@ impl Editor {
 
                 ui.label("Number Color");
                 ui.color_edit_button_srgb(&mut editor.num_formatter.rgb);
+                ui.end_row();
+
+                ui.label("Cursor Stroke");
+                ui.add(Checkbox::without_text(&mut editor.cursor_stroke));
                 ui.end_row();
 
                 ui.end_row();

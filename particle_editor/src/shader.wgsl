@@ -27,26 +27,29 @@ struct MiePotentialParams {
 
 struct FrameMetadata {
     particles: array<MiePotentialParams, 2>,
+    cursor_pos: vec2<f32>,
+    cursor_size: f32,
     step_dt: f32,
     steps_per_frame: u32,
     box_width: f32,
     box_height: f32,
     data_structure: u32,
+    device: u32,
     _padding1: u32,
-    _padding2: u32,
-    _padding3: u32,
 }
 
 struct Uniform {
     metadata: FrameMetadata,
     subtract_color: vec3<f32>,
-    rtx: u32,
+    pixel_size: f32,
     real_time: f32,
+    rtx: u32,
     frame_time: f32,
     sim_time: f32,
     max_speed: f32,
-    pixel_size: f32,
     min_particle_size: f32,
+    _padding1: u32,
+    _padding2: u32,
 }
 
 @group(0) @binding(0)

@@ -15,6 +15,9 @@ constexpr float k_b = 1.380649e-23;
 // Force Zero at:
 // x=s\sqrt[n-m]{\frac{n}{m}}
 //
+// Max Attraction force at:
+// x=s\sqrt[n-m]{\frac{\left(n+1\right)n}{\left(m+1\right)m}}
+//
 // # Wolframalpha
 // Partial[\(40)Power[\(40)Divide[s,x]\(41),n]-Power[\(40)Divide[s,x]\(41),m]\(41) ,x]
 
@@ -96,7 +99,7 @@ struct ParticleParams : MiePotentialParams {
     }
 
     __host__ __device__ void f_apply_force(Particle& dst, Particle src, float2 force,
-            const FrameMetadata& frame) const {
+                                           const FrameMetadata& frame) const {
         float ax = force.x / mass;
         float ay = force.y / mass;
 
@@ -115,7 +118,7 @@ struct ParticleParams : MiePotentialParams {
         dst.ty = src.ty;
     }
 
-    __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const  {
+    __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const {
         const float max = (float)UINT32_MAX;
         float2 wall_bottom = {0., (p.y / max) * frame.box_height};
         float2 wall_top = {0., frame.box_height - wall_bottom.y};
@@ -136,6 +139,17 @@ struct ParticleParams : MiePotentialParams {
     double d_force0_r() {
         double dn = n, dm = m, dsigma = sigma;
         return dsigma * pow(dn / dm, 1. / (dn - dm));
+    }
+
+    float f_max_attraction_r() {
+        float ratio = ((n + 1.f) * n) / ((m + 1.f) * m);
+        return sigma * powf(ratio, 1.f / (n - m));
+    }
+
+    double d_max_attraction_r() {
+        double dn = n, dm = m, dsigma = sigma;
+        double ratio = ((n + 1.) * n) / ((m + 1.) * m);
+        return dsigma * pow(ratio, 1. / (dn - dm));
     }
 };
 

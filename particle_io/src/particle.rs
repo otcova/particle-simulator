@@ -111,6 +111,10 @@ impl TryFrom<u32> for Device {
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug)]
 pub struct FrameMetadata {
     pub particles: [MiePotentialParams; 2],
+
+    pub cursor_pos: [f32; 2],
+    pub cursor_size: f32,
+
     pub step_dt: f32,
     pub steps_per_frame: u32,
 
@@ -119,7 +123,8 @@ pub struct FrameMetadata {
 
     pub data_structure: u32,
     pub device: u32,
-    pub _padding: [u32; 2],
+
+    pub _padding: [u32; 3],
 }
 
 impl Default for FrameMetadata {
@@ -127,6 +132,8 @@ impl Default for FrameMetadata {
         let k_b = 1.380649e-23;
 
         FrameMetadata {
+            cursor_pos: [0., 0.],
+            cursor_size: 0.05,
             step_dt: 50e-15,
             steps_per_frame: 100,
             box_width: 50e-9,

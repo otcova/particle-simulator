@@ -226,6 +226,10 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
 
     log("--- Acc ---");
 
+    log("Max Attraction:   %+e", p.d_force(p.d_max_attraction_r()) / p.mass);
+    uint32_t div = BUCKETS_X / 2;
+    log("1/%u box size     %+e\n", div, p.d_force(box_size / (double)div) / p.mass);
+
     log("Ideal Float  Mie: %+e", p.f_force(r0) / p.mass);
     log("Ideal Double Mie: %+e\n", p.d_force(r0) / p.mass);
 
