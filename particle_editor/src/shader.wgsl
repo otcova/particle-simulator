@@ -1,5 +1,6 @@
-const rtx_extra_radius_scale = 1.4;
+const rtx_extra_radius_scale = 1.2;
 const u32_max = f32(0xFFFFFFFFu);
+const antialias = 1.5;
 
 struct Particle {
     @location(0) pos: vec2<u32>,
@@ -38,6 +39,7 @@ struct FrameMetadata {
 
 struct Uniform {
     metadata: FrameMetadata,
+    subtract_color: vec3<f32>,
     rtx: u32,
     real_time: f32,
     frame_time: f32,
@@ -79,7 +81,7 @@ fn vertex_shader(
 
     // Force a minimum particle size
     let min_size = udata.pixel_size * udata.min_particle_size;
-    particle_size = max(particle_size, min_size) + udata.pixel_size * 2.;
+    particle_size = max(particle_size, min_size) + udata.pixel_size * antialias;
 
     if udata.rtx == 2u {
         particle_size *= rtx_extra_radius_scale;
@@ -107,14 +109,17 @@ fn fragment_shader(in: VertexOutput) -> @location(0) vec4f {
     var color: vec4f;
 
     if udata.rtx == 1u {
-        return shiny_circle(in, 1.);
+        color = shiny_circle(in, 1.);
     } else if udata.rtx == 2u {
-        return shiny2_circle(in);
+        color = shiny2_circle(in);
     } else {
         // antialias
-        let opacity = 1. - smoothstep(1. - in.tex_pixel_size * 1.5, 1., r);
-        return vec4(in.color, opacity);
+        let opacity = 1. - smoothstep(1. - in.tex_pixel_size * antialias, 1., r);
+        color = vec4(in.color, opacity);
     }
+
+    color = vec4(color.rgb - udata.subtract_color, color.a);
+    return color;
 }
 
 const pi = 3.1415926535;
@@ -126,7 +131,7 @@ fn shiny2_circle(in: VertexOutput) -> vec4f {
     let a = atan2(in.tex_coord.y, in.tex_coord.x) / tau;
 
     let salt = in.instance_index;
-    let t = udata.real_time + f32(salt);
+    let t = 2. * udata.real_time + f32(salt);
 
     // Get the color
     var xCol = (a + ((100. + t) / 3.0)) * 3.0;
@@ -150,11 +155,11 @@ fn shiny2_circle(in: VertexOutput) -> vec4f {
     }
 
     // draw color beam
-    let d = r - 1.;
+    let d = (r - 1.) / (1. + in.tex_pixel_size * 5.);
     let beamWidth = (2.7 + 0.5 * cos(a * 5.0 * tau)) * abs(1.0 / (30.0 * d));
     var horBeam = vec3(beamWidth);
 
-    var opacity = beamWidth;
+    var opacity = min(1., beamWidth);
     var color = horBeam * horColour;
 
     if d < 0. {
@@ -163,7 +168,8 @@ fn shiny2_circle(in: VertexOutput) -> vec4f {
         opacity = 1.;
     }
 
-    opacity = mix(opacity, 0., smoothstep(1. / rtx_extra_radius_scale - in.tex_pixel_size * 2., 1., full_r));
+    let transparency_start = 1. / rtx_extra_radius_scale - in.tex_pixel_size * antialias;
+    opacity *= 1. - smoothstep(transparency_start, 1., full_r);
     return vec4(color, opacity);
 }
 
@@ -176,9 +182,6 @@ fn shiny_circle(in: VertexOutput, size: f32) -> vec4f {
 
     var color = in.color;
 
-    let shade1 = smoothstep(size * 0.99 - in.tex_pixel_size * 2., size, r);
-    color *= 1. - shade1 * 0.8;
-
     let shade2 = smoothstep(size * 0.4, size, r);
     color *= 1. - shade2 * 0.3;
 
@@ -188,8 +191,8 @@ fn shiny_circle(in: VertexOutput, size: f32) -> vec4f {
 
     let specular_pos = vec2(-0.1, 0.1) * size;
     let specular = smoothstep(0.6 * size, -0.2 * size, length(in.tex_coord - specular_pos));
-    color += specular * 0.4;
+    color += specular * 0.2;
 
-    let opacity = 1. - smoothstep(size - in.tex_pixel_size * 1.5, size, r);
+    let opacity = 1. - smoothstep(size - in.tex_pixel_size * antialias, size, r);
     return vec4f(color, opacity);
 }

@@ -1,5 +1,9 @@
 #pragma once
 #include <particle_io.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+#define MAX_COMPACT_PARTICLE_COUNT (1 << 16)
 
 void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst);
 
@@ -16,8 +20,8 @@ struct Frontend {
     }
 
     void init_tcp() {
-        new_tcp_client(&reader, &writer, "10.192.196.196:53123");
-        // new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+        // new_tcp_client(&reader, &writer, "10.192.196.196:53123");
+        new_tcp_client(&reader, &writer, "0.0.0.0:53123");
     }
 
     ~Frontend() {
@@ -42,5 +46,6 @@ struct Frontend {
     void write(FrameHeader* frame) {
         frame_compact(frame);
         is_connected = writer_write(&writer, frame);
+        frame->particles_count = 0;  // After compact, its no longer kernel prepared
     }
 };

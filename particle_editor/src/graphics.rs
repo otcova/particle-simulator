@@ -5,10 +5,11 @@ use std::time::Instant;
 use std::{mem::offset_of, num::NonZero};
 use wgpu::{BindGroupLayoutEntry, hal::Rect};
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Default, Zeroable, Pod)]
 pub struct Uniform {
     metadata: FrameMetadata,
+    subtract_color: [f32; 3],
     pub rtx: u32,
     real_time: f32,
     pub frame_time: f32,
@@ -16,6 +17,7 @@ pub struct Uniform {
     pub max_speed: f32,
     pixel_size: f32,
     pub min_particle_size: f32,
+    _padding: [u32; 2],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,7 +88,7 @@ impl Graphics {
             .create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         let pipeline_config = PipelineConfig {
-            blend: BlendType::Over,
+            blend: BlendType::Add,
         };
 
         let particles_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -130,7 +132,7 @@ impl Graphics {
 
             start_instant: Instant::now(),
 
-            background_color: [5, 20, 40],
+            background_color: [0, 10, 25],
             uniform,
             pipeline_config,
             old_pipeline_config: pipeline_config,
@@ -305,6 +307,15 @@ impl Graphics {
         self.uniform.pixel_size = frame.metadata().box_width / rect.w as f32;
         self.uniform.real_time = self.start_instant.elapsed().as_secs_f32();
         self.uniform.metadata = *frame.metadata();
+        self.uniform.subtract_color = if self.pipeline_config.blend == BlendType::Add {
+            [
+                self.background_color[0] as f32 / 255.,
+                self.background_color[1] as f32 / 255.,
+                self.background_color[1] as f32 / 255.,
+            ]
+        } else {
+            [0., 0., 0.]
+        };
 
         let bytes = bytemuck::bytes_of(&self.uniform);
 

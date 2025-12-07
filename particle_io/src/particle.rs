@@ -128,7 +128,7 @@ impl Default for FrameMetadata {
 
         FrameMetadata {
             step_dt: 50e-15,
-            steps_per_frame: 1_000,
+            steps_per_frame: 100,
             box_width: 50e-9,
             box_height: 50e-9,
             data_structure: DataStructure::MatrixBuckets as u32,
@@ -339,17 +339,22 @@ impl Frame {
     pub fn compact(&mut self) {
         let particles = self.particles_mut();
 
-        let mut left = 0;
-        let mut right = particles.len();
+        let Some(first_null_idx) = particles.iter().position(|p| p.is_null()) else {
+            return;
+        };
 
-        while left < right {
-            if particles[left].is_null() {
-                right -= 1;
-                particles.swap(left, right);
-            } else {
-                left += 1;
+        let mut particle_count = first_null_idx;
+
+        for idx in first_null_idx + 1..particles.len() {
+            if !particles[idx].is_null() {
+                particles[particle_count] = particles[idx];
+                particle_count += 1;
             }
         }
+
+        let raw_size = size_of::<FrameHeader>() + size_of_val(&particles[..particle_count]);
+        self.0.truncate(raw_size);
+        self.header_mut().particles_count = particle_count as u32;
     }
 
     /// Prevent an extra copy by compacting directly into another buffer

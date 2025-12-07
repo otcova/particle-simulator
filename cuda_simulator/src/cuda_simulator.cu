@@ -8,11 +8,11 @@ static Frontend frontend;
 
 static void compute_frame(size_t src, size_t dst) {
     kernel_sync(frame);
-    kernel_run_async(frame, src, dst);
+    kernel_run_async(src, dst);
 
     if (frontend.read(frame)) {
         kernel_write(frame, src);
-        kernel_run_async(frame, src, dst);
+        kernel_run_async(src, dst);
         frontend.write(frame);
     } else {
         kernel_read(src, frame);
@@ -26,7 +26,7 @@ void main_loop() {
     kernel_write(frame, K0);
     if (!frontend.is_connected) return;
 
-    kernel_run_async(frame, K0, K1);
+    kernel_run_async(K0, K1);
     frontend.write(frame);
 
     while (1) {

@@ -67,7 +67,7 @@ impl Editor {
             },
 
             lattice: ParticleLattice {
-                particle_count: (10, 10),
+                particle_count: (50, 50),
                 distance_factor: 1.,
                 velocity: 1.0..=10.0,
             },
@@ -552,13 +552,13 @@ impl Editor {
             let TimelineFrame {
                 frame,
                 frame_time,
-                frame_idx,
+                frame_index,
             } = editor.simulation.frame(editor.play_time);
 
             let particles_count = frame.particles().len() as f32;
             let metadata = *frame.metadata();
 
-            let frames_count = editor.simulation.frames_count() as f32;
+            let frames_count = editor.simulation.frame_count() as f32;
             let total_sim_time = editor.simulation.sim_len();
 
             Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
@@ -576,7 +576,7 @@ impl Editor {
 
                 ui.label("Frame Index");
                 ui.horizontal(|ui| {
-                    ui.label(editor.num_int((frame_idx + 1) as f32, ""));
+                    ui.label(editor.num_int((frame_index + 1) as f32, ""));
                     ui.label("/");
                     ui.label(editor.num_int(frames_count, ""));
                 });
@@ -761,11 +761,8 @@ impl Editor {
         if n < 1000.0 {
             f.format = NumFormat::Metric;
             f.figures = 0;
-            f.fmt(n, unit)
-        } else {
-            f.figures = u32::min(3, f.figures);
-            f.fmt(n, unit)
         }
+        f.fmt(n, unit)
     }
 
     fn num(&self, n: f32, unit: &'static str) -> WidgetText {

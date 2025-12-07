@@ -18,12 +18,14 @@
 #define BUCKETS_COUNT (BUCKETS_X * BUCKETS_Y)
 #define MAX_PARTICLE_COUNT (BUCKET_CAPACITY * BUCKETS_COUNT)
 
-#define K0 (MAX_PARTICLE_COUNT * 0)
-#define K1 (MAX_PARTICLE_COUNT * 1)
-#define KI (MAX_PARTICLE_COUNT * 2)
+#define K0 (0)
+#define K1 (1)
+#define KI (2)
 
-static Particle* gpu_buffer = NULL;
-static Particle* cpu_buffer = NULL;
+typedef Particle ParticleBuffer[3][MAX_PARTICLE_COUNT];
+static ParticleBuffer* gpu_buffer = NULL;
+static ParticleBuffer* cpu_buffer = NULL;
+static FrameHeader kernel_frame[3];
 static FrameHeader* frame;
 
 static int gpus_count;
@@ -33,7 +35,7 @@ static cudaStream_t stream;
 static ThreadPool pool;
 
 __host__ __device__ void bucket_kernel(const Particle* src, Particle* dst, FrameMetadata frame,
-        uint32_t particle_count, uint32_t i) {
+                                       uint32_t particle_count, uint32_t i) {
     dst[i].ty = src[i].ty;
     if (src[i].ty < 0) return;
 
@@ -41,18 +43,18 @@ __host__ __device__ void bucket_kernel(const Particle* src, Particle* dst, Frame
     float2 force = {0., 0.};
 
     force += params.f_wall_force(src[i], frame);
-    
+
     uint32_t bucket_x = (i / BUCKET_CAPACITY) % BUCKETS_X;
     uint32_t bucket_y = (i / BUCKET_CAPACITY) / BUCKETS_X;
-    
+
     int32_t x_min = bucket_x == 0 ? 0 : -1;
-    int32_t x_max = bucket_x == BUCKETS_X - 1? 0 : 1;
+    int32_t x_max = bucket_x == BUCKETS_X - 1 ? 0 : 1;
     int32_t y_min = bucket_y == 0 ? 0 : -1;
-    int32_t y_max = bucket_y == BUCKETS_Y - 1? 0 : 1;
-    
+    int32_t y_max = bucket_y == BUCKETS_Y - 1 ? 0 : 1;
+
     for (int32_t y = y_min; y <= y_max; ++y) {
         for (int32_t x = x_min; x <= x_max; ++x) {
-            uint32_t bucket_j = ((x + bucket_x) + (y+bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
+            uint32_t bucket_j = ((x + bucket_x) + (y + bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
 
             for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
                 uint32_t j = jj + bucket_j;
@@ -62,14 +64,13 @@ __host__ __device__ void bucket_kernel(const Particle* src, Particle* dst, Frame
                 force += params.f2_force(r);
             }
         }
-    } 
+    }
 
     params.f_apply_force(dst[i], src[i], force, frame);
 }
 
 __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, FrameMetadata frame,
-        uint32_t particle_count, uint32_t i) {
-
+                                        uint32_t particle_count, uint32_t i) {
     const ParticleParams params(frame.particles[0]);
     float2 force = {0., 0.};
 
@@ -86,7 +87,7 @@ __host__ __device__ void compact_kernel(const Particle* src, Particle* dst, Fram
 }
 
 __global__ static void gpu_compact(const Particle* src, Particle* dst, FrameMetadata frame,
-        uint32_t count) {
+                                   uint32_t count) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
 
@@ -95,10 +96,13 @@ __global__ static void gpu_compact(const Particle* src, Particle* dst, FrameMeta
 }
 
 static void cpu_compact(const Particle* src, Particle* dst, FrameMetadata frame,
-        uint32_t particle_count) {
+                        uint32_t particle_count) {
     if (frame.device == Device::CpuThreadPool) {
+        // pool.run((size_t)particle_count,
+        //          [=](size_t i) { compact_kernel(src, dst, frame, particle_count, i); });
+
         pool.run((size_t)particle_count,
-                [=](size_t i) { compact_kernel(src, dst, frame, particle_count, i); });
+                 [=](size_t i) { bucket_kernel(src, dst, frame, particle_count, i); });
     } else {
         for (uint32_t i = 0; i < particle_count; ++i) {
             compact_kernel(src, dst, frame, particle_count, i);
@@ -106,30 +110,34 @@ static void cpu_compact(const Particle* src, Particle* dst, FrameMetadata frame,
     }
 }
 
-static void step(size_t src_offset, size_t dst_offset, const FrameHeader* frame) {
-    if (frame->metadata.device == Device::Gpu) {
-        Particle* src = gpu_buffer + src_offset;
-        Particle* dst = gpu_buffer + dst_offset;
+static void step(size_t src_offset, size_t dst_offset, const FrameHeader& frame) {
+    if (frame.metadata.device == Device::Gpu) {
+        Particle* src = (*gpu_buffer)[src_offset];
+        Particle* dst = (*gpu_buffer)[dst_offset];
 
         uint32_t nThreads = 256;
-        uint32_t nBlocks = (frame->particles_count + nThreads - 1) / nThreads;
-        gpu_compact<<<nBlocks, nThreads, 0, stream>>>(src, dst, frame->metadata, frame->particles_count);
+        uint32_t nBlocks = (frame.particles_count + nThreads - 1) / nThreads;
+        gpu_compact<<<nBlocks, nThreads, 0, stream>>>(src, dst, frame.metadata,
+                                                      frame.particles_count);
     } else {
-        Particle* src = cpu_buffer + src_offset;
-        Particle* dst = cpu_buffer + dst_offset;
-        cpu_compact(src, dst, frame->metadata, frame->particles_count);
+        Particle* src = (*cpu_buffer)[src_offset];
+        Particle* dst = (*cpu_buffer)[dst_offset];
+        cpu_compact(src, dst, frame.metadata, frame.particles_count);
     }
 }
 
-static void kernel_run_async(const FrameHeader* frame, size_t k_src, size_t k_dst) {
-    if (frame->metadata.steps_per_frame % 2 == 0) {
+static void kernel_run_async(size_t k_src, size_t k_dst) {
+    FrameHeader frame = kernel_frame[k_src];
+    kernel_frame[k_dst] = frame;
+
+    if (frame.metadata.steps_per_frame % 2 == 0) {
         step(k_src, KI, frame);
         step(KI, k_dst, frame);
     } else {
         step(k_src, k_dst, frame);
     }
 
-    for (uint32_t i = 2; i < frame->metadata.steps_per_frame; i += 2) {
+    for (uint32_t i = 2; i < frame.metadata.steps_per_frame; i += 2) {
         step(k_dst, KI, frame);
         step(KI, k_dst, frame);
     }
@@ -155,6 +163,9 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
         dst->particles_count = MAX_PARTICLE_COUNT;  // dst capacity
         frame_compact_into(src, dst);
     } else if (src->metadata.data_structure == DataStructure::MatrixBuckets) {
+        dst->particles_count = MAX_PARTICLE_COUNT;
+        dst->metadata = src->metadata;
+
         // Bucket Matrix
         uint32_t bucket_len[BUCKETS_X * BUCKETS_Y] = {0};
 
@@ -177,7 +188,6 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
                 dst->particles[bucket * BUCKET_CAPACITY + i].ty = -1;
             }
         }
-        dst->particles_count = MAX_PARTICLE_COUNT;
     }
 
     // Since both cpu device targets use the same buffers,
@@ -233,21 +243,25 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
 static void kernel_write(FrameHeader* src, size_t dst_offset) {
     size_t size = sizeof(Particle) * src->particles_count;
     if (src->metadata.device == Device::Gpu) {
-        Particle* dst = gpu_buffer + dst_offset;
+        Particle* dst = (*gpu_buffer)[dst_offset];
         cudaMemcpy(dst, &src->particles, size, cudaMemcpyHostToDevice);
     } else {
-        Particle* dst = cpu_buffer + dst_offset;
+        Particle* dst = (*cpu_buffer)[dst_offset];
         memcpy(dst, &src->particles, size);
     }
+
+    kernel_frame[dst_offset] = *src;
 }
 
 static void kernel_read(size_t src_offset, FrameHeader* dst) {
+    *dst = kernel_frame[src_offset];
+
     size_t size = sizeof(Particle) * dst->particles_count;
     if (dst->metadata.device == Device::Gpu) {
-        Particle* src = gpu_buffer + src_offset;
+        Particle* src = (*gpu_buffer)[src_offset];
         cudaMemcpy(&dst->particles, src, size, cudaMemcpyDeviceToHost);
     } else {
-        Particle* src = cpu_buffer + src_offset;
+        Particle* src = (*cpu_buffer)[src_offset];
         memcpy(&dst->particles, src, size);
     }
 }
@@ -256,10 +270,8 @@ static void kernel_init() {
     cudaError_t error = cudaGetDeviceCount(&gpus_count);
     if (error != cudaSuccess) gpus_count = 0;
 
-    size_t kernel_buffer_size = sizeof(Particle) * MAX_PARTICLE_COUNT * 3;
-
     if (gpus_count > 0) {
-        cudaMalloc((void**)&gpu_buffer, kernel_buffer_size);
+        cudaMalloc((void**)&gpu_buffer, sizeof(ParticleBuffer));
         assert(gpu_buffer);
 
         cudaMallocHost((void**)&frame, packet_size(MAX_PARTICLE_COUNT));
@@ -271,7 +283,7 @@ static void kernel_init() {
         assert(frame);
     }
 
-    cpu_buffer = (Particle*)malloc(kernel_buffer_size);
+    cpu_buffer = (ParticleBuffer*)malloc(sizeof(ParticleBuffer));
     assert(cpu_buffer);
 
     *frame = frame_header_init();
