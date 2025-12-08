@@ -123,8 +123,9 @@ pub struct FrameMetadata {
 
     pub data_structure: u32,
     pub device: u32,
+    pub gpu_threads_per_block_log2: u32,
 
-    pub _padding: [u32; 3],
+    pub _padding: [u32; 2],
 }
 
 impl Default for FrameMetadata {
@@ -140,6 +141,7 @@ impl Default for FrameMetadata {
             box_height: 50e-9,
             data_structure: DataStructure::MatrixBuckets as u32,
             device: Device::Gpu as u32,
+            gpu_threads_per_block_log2: 7,
             particles: [
                 MiePotentialParams {
                     // Nitrogen

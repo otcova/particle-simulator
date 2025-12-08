@@ -9,8 +9,7 @@ constexpr float k_b = 1.380649e-23;
 // C\ =\ \frac{n}{n-m}\left(\frac{n}{m}\right)^{\frac{m}{n-m}}
 // F\left(r\right)
 // =C\cdot p\cdot\frac{m\left(\frac{s}{r}\right)^{m}-n\left(\frac{s}{r}\right)^{n}}{r}
-// V\left(r\right)
-// =C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
+// V\left(r\right) =C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
 //
 // Force Zero at:
 // x=s\sqrt[n-m]{\frac{n}{m}}
@@ -64,6 +63,11 @@ struct ParticleParams : MiePotentialParams {
     __host__ __device__ float f_force(float r) const {
         float sr = sigma / r;
         return C * epsilon * (m * powf(sr, m) - n * powf(sr, n)) / r;
+    }
+
+    __host__ __device__ float f_force_repulsive(float r) const {
+        float sr = sigma / r;
+        return C * epsilon * m * powf(sr, m) / r;
     }
 
     __host__ __device__ float f_ljforce(float r) const {
@@ -120,15 +124,22 @@ struct ParticleParams : MiePotentialParams {
 
     __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const {
         const float max = (float)UINT32_MAX;
-        float2 wall_bottom = {0., (p.y / max) * frame.box_height};
-        float2 wall_top = {0., frame.box_height - wall_bottom.y};
-        float2 wall_left = {(p.x / max) * frame.box_width, 0.};
-        float2 wall_right = {frame.box_width - wall_left.x, 0.};
 
-        float2 force = f2_force(wall_bottom);
-        force += f2_force(wall_top);
-        force += f2_force(wall_left);
-        force += f2_force(wall_right);
+        float2 force;
+        if (p.x < UINT32_MAX / 2) {
+            float wall_left = (p.x / max) * frame.box_width;
+            force.x += f_force_repulsive(wall_left);
+        } else {
+            float wall_right = ((UINT32_MAX - p.x) / max) * frame.box_width;
+            force.x -= f_force_repulsive(wall_right);
+        }
+        if (p.y < UINT32_MAX / 2) {
+            float wall_bottom = (p.y / max) * frame.box_height;
+            force.y += f_force_repulsive(wall_bottom);
+        } else {
+            float wall_top = ((UINT32_MAX - p.y) / max) * frame.box_height;
+            force.y -= f_force_repulsive(wall_top);
+        }
         return force;
     }
 

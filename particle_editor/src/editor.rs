@@ -533,6 +533,13 @@ impl Editor {
                         ui.selectable_value(d, CpuMainThread as u32, CpuMainThread.name());
                     });
                 ui.end_row();
+
+                ui.label("Gpu threads/block");
+                ui.add(
+                    Slider::new(&mut params.gpu_threads_per_block_log2, 0..=10)
+                        .custom_formatter(|n, _| format!("{}", 1 << n as u32)),
+                );
+                ui.end_row();
             });
             ui.add_space(20.);
 

@@ -4,48 +4,45 @@
 
 static Frontend frontend;
 
-static void compute_frame(size_t src, size_t dst) {
-    kernel_sync(frame);
-    kernel_run_async(src, dst);
+static void compute_frame(DeviceBufferId d_src, DeviceBufferId d_dst) {
+    kernel.sync();
+    kernel.run_async(d_src, d_dst);
 
-    if (frontend.read(frame)) {
-        kernel_write(frame, src);
-        kernel_run_async(src, dst);
-        frontend.write(frame);
+    if (frontend.read(kernel.h_frame)) {
+        kernel.write(d_src);
+        kernel.run_async(d_src, d_dst);
+        frontend.write(kernel.h_frame);
     } else {
-        kernel_read(src, frame);
-        frontend.write(frame);
+        kernel.read(d_src);
+        frontend.write(kernel.h_frame);
     }
 }
 
 void main_loop() {
-    if (!frontend.is_connected) return;
+    kernel.write(D_BUFFER_0);
 
-    kernel_write(frame, K0);
+    kernel.run_async(D_BUFFER_0, D_BUFFER_1);
+    frontend.write(kernel.h_frame);
     if (!frontend.is_connected) return;
-
-    kernel_run_async(K0, K1);
-    frontend.write(frame);
 
     while (1) {
-        compute_frame(K1, K0);
+        compute_frame(D_BUFFER_1, D_BUFFER_0);
         if (!frontend.is_connected) return;
 
-        compute_frame(K0, K1);
+        compute_frame(D_BUFFER_0, D_BUFFER_1);
         if (!frontend.is_connected) return;
     }
 }
 
 int main() {
     frontend.init_tcp();
-    kernel_init();
 
     // Wait for first frame
-    while (!frontend.read(frame) && frontend.is_connected) {
+    while (!frontend.read(kernel.h_frame) && frontend.is_connected) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    main_loop();
-
-    kernel_destroy();
+    if (frontend.is_connected) {
+        main_loop();
+    }
 }

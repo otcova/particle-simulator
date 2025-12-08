@@ -35,7 +35,7 @@ struct FrameMetadata {
     box_height: f32,
     data_structure: u32,
     device: u32,
-    _padding1: u32,
+    gpu_threads_per_block_log2: u32,
 }
 
 struct Uniform {

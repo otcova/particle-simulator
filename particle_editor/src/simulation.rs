@@ -25,6 +25,11 @@ impl TimeInterval {
         self.start_index + index.clamp(0, self.frame_count as isize - 1) as usize
     }
 
+    pub fn frame_time(&self, global_frame_index: usize) -> f32 {
+        let idx = (global_frame_index - self.start_index).min(self.frame_count - 1);
+        self.start_time + self.dt * idx as f32
+    }
+
     pub fn last_frame_index(&self) -> usize {
         self.start_index + self.frame_count - 1
     }
@@ -127,10 +132,9 @@ impl Simulation {
         let next_interval = self.times.get(interval_index + 1);
 
         // Case time is in interval
-        if time <= interval.end_time() || next_interval.is_some() {
+        if time <= interval.end_time() || next_interval.is_none() {
             let frame_index = interval.frame_index(time);
-            let actual_frame_time = interval.start_time + interval.dt * frame_index as f32;
-            return (frame_index, actual_frame_time);
+            return (frame_index, interval.frame_time(frame_index));
         }
 
         // Case time is inbetween two intervals
