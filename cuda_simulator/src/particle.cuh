@@ -128,17 +128,17 @@ struct ParticleParams : MiePotentialParams {
         float2 force;
         if (p.x < UINT32_MAX / 2) {
             float wall_left = (p.x / max) * frame.box_width;
-            force.x += f_force_repulsive(wall_left);
+            force.x = f_force_repulsive(wall_left);
         } else {
             float wall_right = ((UINT32_MAX - p.x) / max) * frame.box_width;
-            force.x -= f_force_repulsive(wall_right);
+            force.x = -f_force_repulsive(wall_right);
         }
         if (p.y < UINT32_MAX / 2) {
             float wall_bottom = (p.y / max) * frame.box_height;
-            force.y += f_force_repulsive(wall_bottom);
+            force.y = f_force_repulsive(wall_bottom);
         } else {
             float wall_top = ((UINT32_MAX - p.y) / max) * frame.box_height;
-            force.y -= f_force_repulsive(wall_top);
+            force.y = -f_force_repulsive(wall_top);
         }
         return force;
     }

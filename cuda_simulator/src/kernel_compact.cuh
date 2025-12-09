@@ -34,18 +34,18 @@ static void compact_step(const FrameHeader& frame, DeviceBufferId src_id, Device
             Particle* d_dst = kernel.buffer[dst_id].gpu_particles;
 
             uint32_t nThreads = 1 << frame.metadata.gpu_threads_per_block_log2;
-            uint32_t nBlocks = (frame.particles_count + nThreads - 1) / nThreads;
+            uint32_t nBlocks = (frame.particle_count + nThreads - 1) / nThreads;
 
             compact_step_gpu<<<nBlocks, nThreads, 0, kernel.stream>>>(d_src, d_dst, frame.metadata,
-                                                                      frame.particles_count);
+                                                                      frame.particle_count);
             break;
         }
         case Device::CpuThreadPool: {
             Particle* d_src = kernel.buffer[src_id].cpu_particles;
             Particle* d_dst = kernel.buffer[dst_id].cpu_particles;
 
-            kernel.pool.run((size_t)frame.particles_count, [=](size_t i) {
-                compact_step_kernel(d_src, d_dst, frame.metadata, frame.particles_count, i);
+            kernel.pool.run((size_t)frame.particle_count, [=](size_t i) {
+                compact_step_kernel(d_src, d_dst, frame.metadata, frame.particle_count, i);
             });
             break;
         }
@@ -53,8 +53,8 @@ static void compact_step(const FrameHeader& frame, DeviceBufferId src_id, Device
             Particle* d_src = kernel.buffer[src_id].cpu_particles;
             Particle* d_dst = kernel.buffer[dst_id].cpu_particles;
 
-            for (uint32_t i = 0; i < frame.particles_count; ++i) {
-                compact_step_kernel(d_src, d_dst, frame.metadata, frame.particles_count, i);
+            for (uint32_t i = 0; i < frame.particle_count; ++i) {
+                compact_step_kernel(d_src, d_dst, frame.metadata, frame.particle_count, i);
             }
             break;
         }

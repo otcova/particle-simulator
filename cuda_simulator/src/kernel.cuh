@@ -66,7 +66,7 @@ struct Kernel {
         }
 
         *h_frame = frame_header_init();
-        h_frame->particles_count = MAX_PARTICLE_COUNT;
+        h_frame->particle_count = MAX_PARTICLE_COUNT;
     }
 
     ~Kernel() {
@@ -93,13 +93,20 @@ struct Kernel {
         }
     }
 
-    void write(DeviceBufferId dst_offset) {
+    void write_metadata(DeviceBufferId dst_id) {
         FrameHeader const* src = h_frame;
-        auto& dst = buffer[dst_offset];
-        size_t size = sizeof(Particle) * src->particles_count;
 
+        auto& dst = buffer[dst_id];
+        dst.frame.metadata = src->metadata;
+    }
+
+    void write(DeviceBufferId dst_id) {
+        FrameHeader const* src = h_frame;
+
+        auto& dst = buffer[dst_id];
         dst.frame = *src;
 
+        size_t size = sizeof(Particle) * src->particle_count;
         if (src->metadata.device == Device::Gpu) {
             cudaMemcpy(dst.gpu_particles, &src->particles, size, cudaMemcpyHostToDevice);
         } else {
@@ -113,7 +120,7 @@ struct Kernel {
 
         *dst = src.frame;
 
-        size_t size = sizeof(Particle) * dst->particles_count;
+        size_t size = sizeof(Particle) * dst->particle_count;
         if (dst->metadata.device == Device::Gpu) {
             cudaMemcpy(&dst->particles, src.gpu_particles, size, cudaMemcpyDeviceToHost);
         } else {
@@ -198,32 +205,35 @@ void kernel_prepare_frame(FrameHeader* src, FrameHeader* dst) {
     }
 
     if (src->metadata.data_structure == DataStructure::CompactArray) {
-        dst->particles_count = MAX_PARTICLE_COUNT;  // dst capacity
+        dst->particle_count = MAX_PARTICLE_COUNT;  // dst capacity
         frame_compact_into(src, dst);
     } else if (src->metadata.data_structure == DataStructure::MatrixBuckets) {
-        dst->particles_count = MAX_PARTICLE_COUNT;
         dst->metadata = src->metadata;
 
-        // Particle count per bucket
-        uint32_t bucket_len[BUCKETS_X * BUCKETS_Y] = {0};
+        if (src->particle_count > 0) {
+            dst->particle_count = MAX_PARTICLE_COUNT;
 
-        // Write particles into their buckets
-        for (uint32_t i = 0; i < src->particles_count; ++i) {
-            Particle p = src->particles[i];
-            if (p.ty < 0) continue;
+            // Particle count per bucket
+            uint32_t bucket_len[BUCKETS_X * BUCKETS_Y] = {0};
 
-            uint32_t bucket_x = p.x >> (32 - BUCKETS_X_LOG2);
-            uint32_t bucket_y = p.y >> (32 - BUCKETS_Y_LOG2);
-            uint32_t bucket = bucket_x + bucket_y * BUCKETS_X;
+            // Write particles into their buckets
+            for (uint32_t i = 0; i < src->particle_count; ++i) {
+                Particle p = src->particles[i];
+                if (p.ty < 0) continue;
 
-            uint32_t last_idx = bucket_len[bucket]++;
-            dst->particles[bucket * BUCKET_CAPACITY + last_idx] = p;
-        }
+                uint32_t bucket_x = p.x >> (32 - BUCKETS_X_LOG2);
+                uint32_t bucket_y = p.y >> (32 - BUCKETS_Y_LOG2);
+                uint32_t bucket = bucket_x + bucket_y * BUCKETS_X;
 
-        // Write remaining empty slots
-        for (uint32_t bucket = 0; bucket < BUCKETS_COUNT; ++bucket) {
-            for (uint32_t i = bucket_len[bucket]; i < BUCKET_CAPACITY; ++i) {
-                dst->particles[bucket * BUCKET_CAPACITY + i].ty = -1;
+                uint32_t last_idx = bucket_len[bucket]++;
+                dst->particles[bucket * BUCKET_CAPACITY + last_idx] = p;
+            }
+
+            // Write remaining empty slots
+            for (uint32_t bucket = 0; bucket < BUCKETS_COUNT; ++bucket) {
+                for (uint32_t i = bucket_len[bucket]; i < BUCKET_CAPACITY; ++i) {
+                    dst->particles[bucket * BUCKET_CAPACITY + i].ty = -1;
+                }
             }
         }
     }

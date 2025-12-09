@@ -1,7 +1,5 @@
-use std::fmt::Debug;
-
-use crate::backend::Backend;
 use particle_io::Frame;
+use std::fmt::Debug;
 
 pub struct TimelineFrame<'a> {
     pub frame: &'a Frame,
@@ -46,7 +44,7 @@ impl TimeInterval {
 pub struct Simulation {
     frames: Vec<Frame>,
     times: Vec<TimeInterval>,
-    default_frame: Frame, // Returned when timeline is empty
+    pub default_frame: Frame, // Returned when timeline is empty
     timeline_ram: usize,
 }
 
@@ -62,13 +60,7 @@ impl Simulation {
         }
     }
 
-    pub fn update(&mut self, backend: &mut Backend) {
-        while let Some(frame) = backend.read() {
-            self.push_frame(frame);
-        }
-    }
-
-    fn push_frame(&mut self, frame: Frame) {
+    pub fn push_frame(&mut self, frame: Frame) {
         let index = self.frames.len();
         let dt = frame.metadata().frame_dt();
 
@@ -102,12 +94,20 @@ impl Simulation {
         self.frames.len()
     }
 
-    pub fn frame(&mut self, moment: f32) -> TimelineFrame<'_> {
+    pub fn frame(&self, moment: f32) -> TimelineFrame<'_> {
         let (frame_index, frame_time) = self.find_frame_index(moment);
         TimelineFrame {
             frame: self.frames.get(frame_index).unwrap_or(&self.default_frame),
             frame_time,
             frame_index,
+        }
+    }
+
+    pub fn last_frame(&self) -> TimelineFrame<'_> {
+        TimelineFrame {
+            frame: self.frames.last().unwrap_or(&self.default_frame),
+            frame_time: self.sim_len(),
+            frame_index: self.frame_count().saturating_sub(1),
         }
     }
 

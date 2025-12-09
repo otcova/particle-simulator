@@ -20,17 +20,21 @@ struct Frontend {
     }
 
     void init_tcp() {
-        // new_tcp_client(&reader, &writer, "10.192.196.196:53123");
-        new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+        // is_connected = new_tcp_client(&reader, &writer, "10.192.196.196:53123");
+        is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
     }
 
     ~Frontend() {
-        reader_destroy(&reader);
-        writer_destroy(&writer);
+        if (is_connected) {
+            reader_destroy(&reader);
+            writer_destroy(&writer);
+        }
     }
 
     // Returns true if received data
     bool read(FrameHeader* frame) {
+        if (!is_connected) return false;
+
         Frame received_frame;
         received_frame.ptr = nullptr;
 
@@ -44,8 +48,10 @@ struct Frontend {
     }
 
     void write(FrameHeader* frame) {
+        if (!is_connected) return;
+
         frame_compact(frame);
         is_connected = writer_write(&writer, frame);
-        frame->particles_count = 0;  // After compact, its no longer kernel prepared
+        frame->particle_count = 0;  // After compact, its no longer kernel prepared
     }
 };

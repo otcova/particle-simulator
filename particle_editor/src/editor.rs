@@ -5,7 +5,7 @@ use egui::{
     KeyboardShortcut, Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Stroke, Vec2,
     WidgetText,
 };
-use particle_io::{Frame, FrameMetadata, ParticleLattice};
+use particle_io::{Frame, FrameHeader, FrameMetadata, ParticleLattice};
 use winit::{
     dpi::PhysicalSize,
     event::WindowEvent,
@@ -96,10 +96,24 @@ impl Editor {
         editor
     }
 
+    /// If interactive, the frame showed is the most recent.
+    pub fn is_interactive(&self) -> bool {
+        self.simulation.sim_len() <= self.play_time
+            && !self.loop_play
+            && self.auto_play
+            && self.simulation.frame_count() > 2
+    }
+
     pub fn render(&mut self) {
         self.gpu.window.request_redraw();
 
-        self.simulation.update(&mut self.backend);
+        let interactive = self.is_interactive();
+        while let Some(frame) = self.backend.read() {
+            self.simulation.push_frame(frame);
+        }
+        if interactive {
+            self.play_time = self.simulation.sim_len();
+        }
 
         if self.auto_play {
             let dt = self.egui.context().input(|i| i.unstable_dt);
@@ -122,6 +136,15 @@ impl Editor {
         self.egui.end_frame_and_draw(&self.gpu, &mut encoder);
 
         self.gpu.queue.submit([encoder.finish()]);
+
+        if self.is_interactive() {
+            let frame = self.simulation.last_frame().frame;
+            if frame.metadata() != &self.sim_params {
+                let update = Frame::from_header(FrameHeader::new(self.sim_params, 0));
+                self.backend.write(&update);
+            }
+        }
+
         self.gpu.end_frame();
     }
 
@@ -146,7 +169,7 @@ impl Editor {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
-                    self.playback_panel(ui);
+                    egui::Window::new("Playback").show(ctx, |ui| self.playback_panel(ui));
                 });
         } else {
             SidePanel::left("left").resizable(false).show(ctx, |ui| {
@@ -198,6 +221,10 @@ impl Editor {
             y: (self.gpu.surface_size.height - 1) as f32,
         });
 
+        if self.simulation.frame_count() == 0 {
+            *self.simulation.default_frame.metadata_mut() = self.sim_params;
+        }
+
         let TimelineFrame {
             frame, frame_time, ..
         } = self.simulation.frame(self.play_time);
@@ -227,19 +254,34 @@ impl Editor {
 
         self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
 
+        let cursor_stroke = Stroke::new(1., Color32::from_white_alpha(50));
+        let cursor_fill = Color32::from_white_alpha(50);
+
         if let (Some(mouse), down) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()))
         {
-            let stroke = Stroke::new(1., Color32::from_white_alpha(50));
-            let fill = Color32::from_white_alpha(50);
-
             let max_size = f32::max(inner.width(), inner.height());
             let radius = self.sim_params.cursor_size * max_size / 2.;
 
-            if down {
-                ui.painter().circle(mouse, radius, fill, stroke);
-            } else if self.cursor_stroke {
-                ui.painter().circle_stroke(mouse, radius, stroke);
+            if down || self.cursor_stroke {
+                ui.painter().circle_stroke(mouse, radius, cursor_stroke);
             }
+
+            if down {
+                let cursor = (mouse.to_vec2() - inner.min.to_vec2()) / inner.size();
+                self.sim_params.cursor_pos = [cursor.x, 1. - cursor.y];
+            } else {
+                self.sim_params.cursor_pos = [-1., -1.];
+            }
+        }
+
+        {
+            let mouse = Pos2::from(frame.metadata().cursor_pos);
+            let pos = inner.min + inner.size() * Vec2::new(mouse.x, 1. - mouse.y);
+
+            let max_size = f32::max(inner.width(), inner.height());
+            let radius = frame.metadata().cursor_size * max_size / 2.;
+
+            ui.painter().circle(pos, radius, cursor_fill, cursor_stroke);
         }
 
         let fill = Color32::from_rgb(
@@ -333,8 +375,12 @@ impl Editor {
         }
     }
 
-    fn toggle_fullscreen(&self) {
-        let window = &self.gpu.window;
+    pub fn window(&self) -> &Window {
+        &self.gpu.window
+    }
+
+    pub fn toggle_fullscreen(&self) {
+        let window = &self.window();
         if window.fullscreen().is_some() {
             window.set_fullscreen(None);
         } else {
@@ -453,32 +499,33 @@ impl Editor {
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
-            let mut params = editor.sim_params;
-
             Grid::new("params-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Step delta time");
                 ui.add(
-                    Slider::new(&mut params.step_dt, 0.1e-15..=1000e-15)
+                    Slider::new(&mut editor.sim_params.step_dt, 0.1e-15..=1000e-15)
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "s"))
                         .logarithmic(true),
                 );
                 ui.end_row();
 
                 ui.label("Steps per frame");
-                ui.add(Slider::new(&mut params.steps_per_frame, 1..=1000000).logarithmic(true));
+                ui.add(
+                    Slider::new(&mut editor.sim_params.steps_per_frame, 1..=1000000)
+                        .logarithmic(true),
+                );
                 ui.end_row();
 
                 ui.label("Frame delta time");
-                let frame_dt = params.step_dt * params.steps_per_frame as f32;
+                let frame_dt = editor.sim_params.step_dt * editor.sim_params.steps_per_frame as f32;
                 ui.label(editor.num(frame_dt, "s"));
                 ui.end_row();
 
                 ui.end_row();
 
                 ui.label("Cursor Size");
-                let mut size = params.cursor_size * 100.;
+                let mut size = editor.sim_params.cursor_size * 100.;
                 ui.add(Slider::new(&mut size, 0.0..=100.0).suffix("%"));
-                params.cursor_size = size / 100.;
+                editor.sim_params.cursor_size = size / 100.;
                 ui.end_row();
 
                 ui.end_row();
@@ -486,7 +533,7 @@ impl Editor {
                 let box_size_range = 1e-9..=1000e-9;
                 ui.label("Box width");
                 ui.add(
-                    Slider::new(&mut params.box_width, box_size_range.clone())
+                    Slider::new(&mut editor.sim_params.box_width, box_size_range.clone())
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
                         .logarithmic(true),
                 );
@@ -494,7 +541,7 @@ impl Editor {
 
                 ui.label("Box height");
                 ui.add(
-                    Slider::new(&mut params.box_height, box_size_range.clone())
+                    Slider::new(&mut editor.sim_params.box_height, box_size_range.clone())
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
                         .logarithmic(true),
                 );
@@ -503,14 +550,14 @@ impl Editor {
                 ui.label("Data structure");
 
                 let current_data_structure =
-                    particle_io::DataStructure::try_from(params.data_structure)
+                    particle_io::DataStructure::try_from(editor.sim_params.data_structure)
                         .map(|d| d.name())
                         .unwrap_or("Invalid option");
 
                 ComboBox::from_id_salt("Data structure")
                     .selected_text(current_data_structure)
                     .show_ui(ui, |ui| {
-                        let d = &mut params.data_structure;
+                        let d = &mut editor.sim_params.data_structure;
                         use particle_io::DataStructure::*;
                         ui.selectable_value(d, CompactArray as u32, CompactArray.name());
                         ui.selectable_value(d, MatrixBuckets as u32, MatrixBuckets.name());
@@ -519,14 +566,14 @@ impl Editor {
 
                 ui.label("Device");
 
-                let current_device = particle_io::Device::try_from(params.device)
+                let current_device = particle_io::Device::try_from(editor.sim_params.device)
                     .map(|d| d.name())
                     .unwrap_or("Invalid device");
 
                 ComboBox::from_id_salt("Device")
                     .selected_text(current_device)
                     .show_ui(ui, |ui| {
-                        let d = &mut params.device;
+                        let d = &mut editor.sim_params.device;
                         use particle_io::Device::*;
                         ui.selectable_value(d, Gpu as u32, Gpu.name());
                         ui.selectable_value(d, CpuThreadPool as u32, CpuThreadPool.name());
@@ -536,14 +583,14 @@ impl Editor {
 
                 ui.label("Gpu threads/block");
                 ui.add(
-                    Slider::new(&mut params.gpu_threads_per_block_log2, 0..=10)
+                    Slider::new(&mut editor.sim_params.gpu_threads_per_block_log2, 0..=10)
                         .custom_formatter(|n, _| format!("{}", 1 << n as u32)),
                 );
                 ui.end_row();
             });
             ui.add_space(20.);
 
-            for (idx, particle) in params.particles.iter_mut().enumerate() {
+            for (idx, particle) in editor.sim_params.particles.iter_mut().enumerate() {
                 let name = format!("Particle {}", idx);
                 ui.collapsing(&name, |ui| {
                     Grid::new(&name).num_columns(2).show(ui, |ui| {
@@ -579,11 +626,6 @@ impl Editor {
                 });
                 ui.end_row();
             }
-
-            if editor.sim_params != params {
-                // Maybe: Params changed => Send to backend
-            }
-            editor.sim_params = params;
         });
 
         self.ui_section(ui, "Stats", |editor, ui| {
@@ -593,10 +635,10 @@ impl Editor {
                 frame_index,
             } = editor.simulation.frame(editor.play_time);
 
-            let particles_count = frame.particles().len() as f32;
+            let particle_count = frame.particles().len() as f32;
             let metadata = *frame.metadata();
 
-            let frames_count = editor.simulation.frame_count() as f32;
+            let frame_count = editor.simulation.frame_count() as f32;
             let total_sim_time = editor.simulation.sim_len();
 
             Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
@@ -616,7 +658,7 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label(editor.num_int((frame_index + 1) as f32, ""));
                     ui.label("/");
-                    ui.label(editor.num_int(frames_count, ""));
+                    ui.label(editor.num_int(frame_count, ""));
                 });
                 ui.end_row();
 
@@ -625,7 +667,7 @@ impl Editor {
                 ui.end_row();
 
                 ui.label("Num Particles");
-                ui.label(editor.num(particles_count, ""));
+                ui.label(editor.num(particle_count, ""));
                 ui.end_row();
 
                 ui.end_row();
@@ -813,145 +855,139 @@ impl Editor {
 
     // can be optimized to only recalculate widgets width when necessary
     fn playback_panel(&mut self, ui: &mut egui::Ui) {
-        let mut content = |ui: &mut egui::Ui| -> () {
-            ui.vertical(|ui| {
-                // timeline bar
+        ui.vertical(|ui| {
+            // timeline bar
 
-                ui.horizontal(|ui| {
-                    let t_time = self.simulation.sim_len();
+            ui.horizontal(|ui| {
+                let t_time = self.simulation.sim_len();
 
-                    let t_time_text = self.num_formatter.raw_string(t_time, "s");
+                let t_time_text = self.num_formatter.raw_string(t_time, "s");
 
-                    let mut cursor = self.play_time;
+                let mut cursor = self.play_time;
 
-                    ui.style_mut().spacing.slider_width = 0.;
-                    let resp = ui.add_visible(
-                        false,
-                        egui::Slider::new(&mut cursor, (0.)..=t_time)
+                ui.style_mut().spacing.slider_width = 0.;
+                let resp = ui.add_visible(
+                    false,
+                    egui::Slider::new(&mut cursor, (0.)..=t_time)
+                        .suffix(format!(" /{t_time_text}"))
+                        .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
+                );
+
+                ui.add_space(-resp.rect.width() - 8.);
+                ui.style_mut().spacing.slider_width =
+                    (0 as f32).max(ui.available_width() - resp.rect.width());
+
+                if t_time == 0. {
+                    ui.add(
+                        egui::Slider::new(&mut cursor, (0.)..=0.1)
+                            .fixed_decimals(0)
                             .suffix(format!(" /{t_time_text}"))
+                            .custom_formatter(|_, _| self.num_formatter.raw_string(0., "s")),
+                    );
+                } else {
+                    ui.add(
+                        egui::Slider::new(&mut cursor, (0.)..=t_time)
+                            .clamping(egui::SliderClamping::Never)
+                            .suffix(format!(" /{t_time_text}"))
+                            .trailing_fill(true)
                             .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
                     );
+                }
 
-                    ui.add_space(-resp.rect.width() - 8.);
-                    ui.style_mut().spacing.slider_width =
-                        (0 as f32).max(ui.available_width() - resp.rect.width());
+                self.play_time = cursor;
+            });
 
-                    if t_time == 0. {
-                        ui.add(
-                            egui::Slider::new(&mut cursor, (0.)..=0.1)
-                                .fixed_decimals(0)
-                                .suffix(format!(" /{t_time_text}"))
-                                .custom_formatter(|_, _| self.num_formatter.raw_string(0., "s")),
-                        );
-                    } else {
-                        ui.add(
-                            egui::Slider::new(&mut cursor, (0.)..=t_time)
-                                .clamping(egui::SliderClamping::Never)
-                                .suffix(format!(" /{t_time_text}"))
-                                .trailing_fill(true)
-                                .custom_formatter(|n, _| {
-                                    self.num_formatter.raw_string(n as f32, "s")
-                                }),
-                        );
-                    }
+            // play buttons
+            ui.horizontal(|ui| {
+                let tot_space = ui.available_width();
+                let l_ui_p = ui.max_rect().left();
 
-                    self.play_time = cursor;
-                });
-
-                // play buttons
-                ui.horizontal(|ui| {
-                    let tot_space = ui.available_width();
-                    let l_ui_p = ui.max_rect().left();
-
-                    // 22.96875: buttons width (pre-measured/observed)
-                    let speed_space = tot_space / 2.
+                // 22.96875: buttons width (pre-measured/observed)
+                let speed_space = tot_space / 2.
                         - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
                         + (22.96875 / 2. + 8. / 2.); // to have the play button on center
 
-                    const MIN_SPEED: f32 = 1e-15;
-                    const MAX_SPEED: f32 = 1.0;
+                const MIN_SPEED: f32 = 1e-15;
+                const MAX_SPEED: f32 = 1.0;
 
-                    ui.style_mut().spacing.item_spacing =
-                        Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
-                    ui.add_space(
-                        -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
-                    );
+                ui.style_mut().spacing.item_spacing =
+                    Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
+                ui.add_space(
+                    -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
+                );
 
-                    ui.add(
-                        egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
-                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
-                            .logarithmic(true),
-                    );
+                ui.add_enabled(
+                    !self.is_interactive(),
+                    egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
+                        .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
+                        .logarithmic(true),
+                );
 
-                    ui.style_mut().spacing.item_spacing = Vec2::new(8., 0.);
+                ui.style_mut().spacing.item_spacing = Vec2::new(8., 0.);
 
-                    if ui
-                        .put(
-                            egui::Rect::from_min_max(
-                                Pos2 {
-                                    x: l_ui_p + speed_space,
-                                    y: ui.cursor().top(),
-                                },
-                                Pos2 {
-                                    x: l_ui_p + speed_space + 22.96875,
-                                    y: ui.cursor().bottom(),
-                                },
-                            ),
-                            egui::Button::image(egui::Image::new(egui::include_image!(
-                                "../icons/media-seek-backward.png"
-                            ))),
-                        )
-                        .clicked()
+                if ui
+                    .put(
+                        egui::Rect::from_min_max(
+                            Pos2 {
+                                x: l_ui_p + speed_space,
+                                y: ui.cursor().top(),
+                            },
+                            Pos2 {
+                                x: l_ui_p + speed_space + 22.96875,
+                                y: ui.cursor().bottom(),
+                            },
+                        ),
+                        egui::Button::image(egui::Image::new(egui::include_image!(
+                            "../icons/media-seek-backward.png"
+                        ))),
+                    )
+                    .clicked()
+                {
+                    self.play_time = (self.play_time - self.play_speed).max(0.);
+                };
+
+                if ui
+                    .add(egui::Button::image(egui::Image::new(if self.auto_play {
+                        egui::include_image!("../icons/media-playback-pause.png")
+                    } else {
+                        egui::include_image!("../icons/media-playback-start.png")
+                    })))
+                    .clicked()
+                {
+                    self.auto_play = !self.auto_play;
+                }
+
+                if ui
+                    .add(egui::Button::image(egui::Image::new(egui::include_image!(
+                        "../icons/media-seek-forward.png"
+                    ))))
+                    .clicked()
+                {
+                    self.play_time = if self.play_time + self.play_speed > self.simulation.sim_len()
                     {
-                        self.play_time = (self.play_time - self.play_speed).max(0.);
+                        0.
+                    } else {
+                        self.play_time + self.play_speed
                     };
+                }
 
-                    if ui
-                        .add(egui::Button::image(egui::Image::new(if self.auto_play {
-                            egui::include_image!("../icons/media-playback-pause.png")
-                        } else {
-                            egui::include_image!("../icons/media-playback-start.png")
-                        })))
-                        .clicked()
-                    {
-                        self.auto_play = !self.auto_play;
-                    }
-
-                    if ui
-                        .add(egui::Button::image(egui::Image::new(egui::include_image!(
-                            "../icons/media-seek-forward.png"
-                        ))))
-                        .clicked()
-                    {
-                        self.play_time =
-                            if self.play_time + self.play_speed > self.simulation.sim_len() {
-                                0.
-                            } else {
-                                self.play_time + self.play_speed
-                            };
-                    }
-
-                    if ui
-                        .add(egui::Button::image(
-                            egui::Image::new(egui::include_image!(
-                                "../icons/media-playlist-repeat.png"
-                            ))
-                            .tint(Color32::from_gray(if self.loop_play { 255 } else { 0 })),
+                if ui
+                    .add(egui::Button::image(
+                        egui::Image::new(egui::include_image!(
+                            "../icons/media-playlist-repeat.png"
                         ))
-                        .clicked()
-                    {
-                        self.loop_play = !self.loop_play;
-                    };
-                });
+                        .tint(Color32::from_gray(if self.loop_play {
+                            255
+                        } else {
+                            0
+                        })),
+                    ))
+                    .clicked()
+                {
+                    self.loop_play = !self.loop_play;
+                };
             });
-        };
-
-        if self.floating_windows {
-            let ctx = &self.egui.context().clone();
-            egui::Window::new("Playback").show(ctx, content);
-        } else {
-            content(ui);
-        }
+        });
     }
 }
 
