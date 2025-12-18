@@ -13,8 +13,9 @@ NVCC        = $(CUDA_HOME)/bin/nvcc
 ARCH        = -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89
 NVCC_FLAGS  = -O3 -Wno-deprecated-gpu-targets -I$(CUDA_HOME)/include $(ARCH) -I$(CUDA_HOME)/sdk/CUDALibraries/common/inc --ptxas-options=-v 
 LD_FLAGS    = -lcudart -I$(CUDA_HOME)/sdk/CUDALibraries/common/lib  -Xlinker -rpath,$(CUDA_HOME)/lib64
+MAKEFLAGS  += --no-print-directory
 
-SRC_FILES = $(shell find src -type f)
+SRC_FILES = $(shell find src -type f) ../particle_io/c_api/include/particle_io.h
 
 .PHONY: build
 build: build/cuda_simulator

@@ -44,8 +44,8 @@ pub(crate) unsafe fn ptr_as_frame<R, F: FnOnce(&mut particle_io::Frame) -> R>(
     ptr: *mut FrameHeader,
     f: F,
 ) -> R {
-    let particles_count = unsafe { &*ptr }.particles_count;
-    let size = FrameHeader::packet_size(particles_count);
+    let particle_count = unsafe { &*ptr }.particle_count;
+    let size = FrameHeader::packet_size(particle_count);
     // Safety: We do not mutate nor drop the Vec
     let bytes = unsafe { Vec::from_raw_parts(ptr as *mut u8, size, size) };
     let mut frame = particle_io::Frame::from_bytes(bytes);
@@ -101,8 +101,8 @@ pub unsafe extern "C" fn frame_compact_into(frame: *mut FrameHeader, dst: *mut F
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn packet_size(particles_count: u32) -> usize {
-    FrameHeader::packet_size(particles_count)
+pub extern "C" fn packet_size(particle_count: u32) -> usize {
+    FrameHeader::packet_size(particle_count)
 }
 
 #[unsafe(no_mangle)]

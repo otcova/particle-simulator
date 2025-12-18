@@ -39,6 +39,7 @@ pub struct Editor {
     floating_windows: bool,
     close_window: bool,
     interpolation: Interpolation,
+    cursor_stroke: bool,
 
     num_formatter: NumFormatter,
 
@@ -79,6 +80,7 @@ impl Editor {
             floating_windows: false,
             close_window: false,
             interpolation: Interpolation::None,
+            cursor_stroke: false,
 
             num_formatter: NumFormatter {
                 figures: 3,
@@ -87,7 +89,7 @@ impl Editor {
             },
 
             lattice: ParticleLattice {
-                particle_count: (10, 10),
+                particle_count: (50, 50),
                 distance_factor: 1.,
                 velocity: 1.0..=10.0,
             },
@@ -123,10 +125,24 @@ impl Editor {
         editor
     }
 
+    /// If interactive, the frame showed is the most recent.
+    pub fn is_interactive(&self) -> bool {
+        self.simulation.sim_len() <= self.play_time
+            && !self.loop_play
+            && self.auto_play
+            && self.simulation.frame_count() > 2
+    }
+
     pub fn render(&mut self) {
         self.gpu.window.request_redraw();
 
-        self.simulation.update(&mut self.backend);
+        let interactive = self.is_interactive();
+        while let Some(frame) = self.backend.read() {
+            self.simulation.push_frame(frame);
+        }
+        if interactive {
+            self.play_time = self.simulation.sim_len();
+        }
 
         if self.auto_play {
             let dt = self.egui.context().input(|i| i.unstable_dt);
@@ -149,6 +165,15 @@ impl Editor {
         self.egui.end_frame_and_draw(&self.gpu, &mut encoder);
 
         self.gpu.queue.submit([encoder.finish()]);
+
+        if self.is_interactive() {
+            let frame = self.simulation.last_frame().frame;
+            if frame.metadata() != &self.sim_params {
+                let update = Frame::from_header(FrameHeader::new(self.sim_params, 0));
+                self.backend.write(&update);
+            }
+        }
+
         self.gpu.end_frame();
     }
 
@@ -173,7 +198,11 @@ impl Editor {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
+<<<<<<< HEAD
                     self.bottom_panel(ui);
+=======
+                    egui::Window::new("Playback").show(ctx, |ui| self.playback_panel(ui));
+>>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
                 });
         } else {
             SidePanel::left("left").resizable(false).show(ctx, |ui| {
@@ -225,6 +254,10 @@ impl Editor {
             y: (self.gpu.surface_size.height - 1) as f32,
         });
 
+        if self.simulation.frame_count() == 0 {
+            *self.simulation.default_frame.metadata_mut() = self.sim_params;
+        }
+
         let TimelineFrame {
             frame, frame_time, ..
         } = self.simulation.frame(self.play_time);
@@ -252,6 +285,7 @@ impl Editor {
         }
         self.graphics.uniform.frame_time = frame_time;
 
+<<<<<<< HEAD
         if !self.editing {
             self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
         } else {
@@ -259,6 +293,46 @@ impl Editor {
                 .render(&self.gpu, encoder, &self.edit_frame, canvas_rect);
         }
         let fill = Color32::from_black_alpha(100);
+=======
+        self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
+
+        let cursor_stroke = Stroke::new(1., Color32::from_white_alpha(50));
+        let cursor_fill = Color32::from_white_alpha(50);
+
+        if let (Some(mouse), down) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()))
+        {
+            let max_size = f32::max(inner.width(), inner.height());
+            let radius = self.sim_params.cursor_size * max_size / 2.;
+
+            if down || self.cursor_stroke {
+                ui.painter().circle_stroke(mouse, radius, cursor_stroke);
+            }
+
+            if down {
+                let cursor = (mouse.to_vec2() - inner.min.to_vec2()) / inner.size();
+                self.sim_params.cursor_pos = [cursor.x, 1. - cursor.y];
+            } else {
+                self.sim_params.cursor_pos = [-1., -1.];
+            }
+        }
+
+        {
+            let mouse = Pos2::from(frame.metadata().cursor_pos);
+            let pos = inner.min + inner.size() * Vec2::new(mouse.x, 1. - mouse.y);
+
+            let max_size = f32::max(inner.width(), inner.height());
+            let radius = frame.metadata().cursor_size * max_size / 2.;
+
+            ui.painter().circle(pos, radius, cursor_fill, cursor_stroke);
+        }
+
+        let fill = Color32::from_rgb(
+            self.graphics.background_color[0] / 2,
+            self.graphics.background_color[1] / 2,
+            self.graphics.background_color[2] / 2,
+        );
+
+>>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
         ui.painter().rect_filled(
             Rect::from_min_max(outter.min, Pos2::new(inner.min.x, inner.max.y)),
             0,
@@ -612,8 +686,12 @@ impl Editor {
         }
     }
 
-    fn toggle_fullscreen(&self) {
-        let window = &self.gpu.window;
+    pub fn window(&self) -> &Window {
+        &self.gpu.window
+    }
+
+    pub fn toggle_fullscreen(&self) {
+        let window = &self.window();
         if window.fullscreen().is_some() {
             window.set_fullscreen(None);
         } else {
@@ -750,24 +828,33 @@ impl Editor {
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
-            let mut params = editor.sim_params;
-
             Grid::new("params-grid").num_columns(2).show(ui, |ui| {
                 ui.label("Step delta time");
                 ui.add(
-                    Slider::new(&mut params.step_dt, 0.1e-15..=1000e-15)
+                    Slider::new(&mut editor.sim_params.step_dt, 0.1e-15..=1000e-15)
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "s"))
                         .logarithmic(true),
                 );
                 ui.end_row();
 
                 ui.label("Steps per frame");
-                ui.add(Slider::new(&mut params.steps_per_frame, 1..=1000000).logarithmic(true));
+                ui.add(
+                    Slider::new(&mut editor.sim_params.steps_per_frame, 1..=1000000)
+                        .logarithmic(true),
+                );
                 ui.end_row();
 
                 ui.label("Frame delta time");
-                let frame_dt = params.step_dt * params.steps_per_frame as f32;
+                let frame_dt = editor.sim_params.step_dt * editor.sim_params.steps_per_frame as f32;
                 ui.label(editor.num(frame_dt, "s"));
+                ui.end_row();
+
+                ui.end_row();
+
+                ui.label("Cursor Size");
+                let mut size = editor.sim_params.cursor_size * 100.;
+                ui.add(Slider::new(&mut size, 0.0..=100.0).suffix("%"));
+                editor.sim_params.cursor_size = size / 100.;
                 ui.end_row();
 
                 ui.end_row();
@@ -775,7 +862,7 @@ impl Editor {
                 let box_size_range = 1e-9..=1000e-9;
                 ui.label("Box width");
                 ui.add(
-                    Slider::new(&mut params.box_width, box_size_range.clone())
+                    Slider::new(&mut editor.sim_params.box_width, box_size_range.clone())
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
                         .logarithmic(true),
                 );
@@ -783,7 +870,7 @@ impl Editor {
 
                 ui.label("Box height");
                 ui.add(
-                    Slider::new(&mut params.box_height, box_size_range.clone())
+                    Slider::new(&mut editor.sim_params.box_height, box_size_range.clone())
                         .custom_formatter(|t, _| editor.num_formatter.raw_string(t as f32, "m"))
                         .logarithmic(true),
                 );
@@ -792,14 +879,14 @@ impl Editor {
                 ui.label("Data structure");
 
                 let current_data_structure =
-                    particle_io::DataStructure::try_from(params.data_structure)
+                    particle_io::DataStructure::try_from(editor.sim_params.data_structure)
                         .map(|d| d.name())
                         .unwrap_or("Invalid option");
 
                 ComboBox::from_id_salt("Data structure")
                     .selected_text(current_data_structure)
                     .show_ui(ui, |ui| {
-                        let d = &mut params.data_structure;
+                        let d = &mut editor.sim_params.data_structure;
                         use particle_io::DataStructure::*;
                         ui.selectable_value(d, CompactArray as u32, CompactArray.name());
                         ui.selectable_value(d, MatrixBuckets as u32, MatrixBuckets.name());
@@ -808,24 +895,31 @@ impl Editor {
 
                 ui.label("Device");
 
-                let current_device = particle_io::Device::try_from(params.device)
+                let current_device = particle_io::Device::try_from(editor.sim_params.device)
                     .map(|d| d.name())
                     .unwrap_or("Invalid device");
 
                 ComboBox::from_id_salt("Device")
                     .selected_text(current_device)
                     .show_ui(ui, |ui| {
-                        let d = &mut params.device;
+                        let d = &mut editor.sim_params.device;
                         use particle_io::Device::*;
                         ui.selectable_value(d, Gpu as u32, Gpu.name());
                         ui.selectable_value(d, CpuThreadPool as u32, CpuThreadPool.name());
                         ui.selectable_value(d, CpuMainThread as u32, CpuMainThread.name());
                     });
                 ui.end_row();
+
+                ui.label("Gpu threads/block");
+                ui.add(
+                    Slider::new(&mut editor.sim_params.gpu_threads_per_block_log2, 0..=10)
+                        .custom_formatter(|n, _| format!("{}", 1 << n as u32)),
+                );
+                ui.end_row();
             });
             ui.add_space(20.);
 
-            for (idx, particle) in params.particles.iter_mut().enumerate() {
+            for (idx, particle) in editor.sim_params.particles.iter_mut().enumerate() {
                 let name = format!("Particle {}", idx);
                 ui.collapsing(&name, |ui| {
                     Grid::new(&name).num_columns(2).show(ui, |ui| {
@@ -861,24 +955,19 @@ impl Editor {
                 });
                 ui.end_row();
             }
-
-            if editor.sim_params != params {
-                // Maybe: Params changed => Send to backend
-            }
-            editor.sim_params = params;
         });
 
         self.ui_section(ui, "Stats", |editor, ui| {
             let TimelineFrame {
                 frame,
                 frame_time,
-                frame_idx,
+                frame_index,
             } = editor.simulation.frame(editor.play_time);
 
-            let particles_count = frame.particles().len() as f32;
+            let particle_count = frame.particles().len() as f32;
             let metadata = *frame.metadata();
 
-            let frames_count = editor.simulation.frames_count() as f32;
+            let frame_count = editor.simulation.frame_count() as f32;
             let total_sim_time = editor.simulation.sim_len();
 
             Grid::new("stats-grid").num_columns(2).show(ui, |ui| {
@@ -896,9 +985,9 @@ impl Editor {
 
                 ui.label("Frame Index");
                 ui.horizontal(|ui| {
-                    ui.label(editor.num_int((frame_idx + 1) as f32, ""));
+                    ui.label(editor.num_int((frame_index + 1) as f32, ""));
                     ui.label("/");
-                    ui.label(editor.num_int(frames_count, ""));
+                    ui.label(editor.num_int(frame_count, ""));
                 });
                 ui.end_row();
 
@@ -907,7 +996,7 @@ impl Editor {
                 ui.end_row();
 
                 ui.label("Num Particles");
-                ui.label(editor.num(particles_count, ""));
+                ui.label(editor.num(particle_count, ""));
                 ui.end_row();
 
                 ui.end_row();
@@ -1006,6 +1095,10 @@ impl Editor {
                 ui.color_edit_button_srgb(&mut editor.num_formatter.rgb);
                 ui.end_row();
 
+                ui.label("Cursor Stroke");
+                ui.add(Checkbox::without_text(&mut editor.cursor_stroke));
+                ui.end_row();
+
                 ui.end_row();
 
                 ui.label("Max Speed for Color");
@@ -1081,17 +1174,15 @@ impl Editor {
         if n < 1000.0 {
             f.format = NumFormat::Metric;
             f.figures = 0;
-            f.fmt(n, unit)
-        } else {
-            f.figures = u32::min(3, f.figures);
-            f.fmt(n, unit)
         }
+        f.fmt(n, unit)
     }
 
     fn num(&self, n: f32, unit: &'static str) -> WidgetText {
         self.num_formatter.fmt(n, unit)
     }
 
+<<<<<<< HEAD
     fn bottom_panel(&mut self, ui: &mut egui::Ui) {
         if self.floating_windows {
             let ctx = &self.egui.context().clone();
@@ -1223,6 +1314,8 @@ impl Editor {
         });
     }
 
+=======
+>>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
     // can be optimized to only recalculate widgets width when necessary
     fn playback_panel(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
@@ -1286,7 +1379,12 @@ impl Editor {
                     -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
                 );
 
+<<<<<<< HEAD
                 ui.add(
+=======
+                ui.add_enabled(
+                    !self.is_interactive(),
+>>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
                     egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
                         .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
                         .logarithmic(true),

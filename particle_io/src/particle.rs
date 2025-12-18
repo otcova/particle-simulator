@@ -111,6 +111,10 @@ impl TryFrom<u32> for Device {
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug)]
 pub struct FrameMetadata {
     pub particles: [MiePotentialParams; 2],
+
+    pub cursor_pos: [f32; 2],
+    pub cursor_size: f32,
+
     pub step_dt: f32,
     pub steps_per_frame: u32,
 
@@ -119,6 +123,8 @@ pub struct FrameMetadata {
 
     pub data_structure: u32,
     pub device: u32,
+    pub gpu_threads_per_block_log2: u32,
+
     pub _padding: [u32; 2],
 }
 
@@ -127,12 +133,15 @@ impl Default for FrameMetadata {
         let k_b = 1.380649e-23;
 
         FrameMetadata {
+            cursor_pos: [-1., -1.],
+            cursor_size: 0.05,
             step_dt: 50e-15,
-            steps_per_frame: 1_000,
+            steps_per_frame: 100,
             box_width: 50e-9,
             box_height: 50e-9,
             data_structure: DataStructure::MatrixBuckets as u32,
             device: Device::Gpu as u32,
+            gpu_threads_per_block_log2: 7,
             particles: [
                 MiePotentialParams {
                     // Nitrogen
@@ -183,7 +192,7 @@ pub struct Frame(Vec<u8>);
 #[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default, Debug)]
 pub struct FrameHeader {
     signature_start: [u8; 4],
-    pub particles_count: u32,
+    pub particle_count: u32,
     pub metadata: FrameMetadata,
     signature_end: [u8; 4],
     _padding: u32,
@@ -211,10 +220,10 @@ impl FrameHeader {
         self.signature_end = Self::SIGNATURE_END;
     }
 
-    pub fn new(metadata: FrameMetadata, particles_count: u32) -> FrameHeader {
+    pub fn new(metadata: FrameMetadata, particle_count: u32) -> FrameHeader {
         FrameHeader {
             signature_start: Self::SIGNATURE_START,
-            particles_count,
+            particle_count,
             metadata,
             signature_end: Self::SIGNATURE_END,
             _padding: 0,
@@ -222,8 +231,8 @@ impl FrameHeader {
         }
     }
 
-    pub fn packet_size(particles_count: u32) -> usize {
-        size_of::<FrameHeader>() + size_of::<Particle>() * particles_count as usize
+    pub fn packet_size(particle_count: u32) -> usize {
+        size_of::<FrameHeader>() + size_of::<Particle>() * particle_count as usize
     }
 }
 
@@ -283,7 +292,7 @@ impl Frame {
     }
 
     pub fn from_header(header: FrameHeader) -> Frame {
-        let size = FrameHeader::packet_size(header.particles_count);
+        let size = FrameHeader::packet_size(header.particle_count);
         let mut bytes = Vec::with_capacity(size);
         bytes.extend_from_slice(bytes_of(&header));
         // Safety:
@@ -296,7 +305,7 @@ impl Frame {
     pub fn from_bytes(bytes: Vec<u8>) -> Frame {
         assert!(bytes.len() >= size_of::<FrameHeader>());
         let frame = Frame(bytes);
-        assert!(FrameHeader::packet_size(frame.header().particles_count) == frame.0.len());
+        assert!(FrameHeader::packet_size(frame.header().particle_count) == frame.0.len());
         frame
     }
 
@@ -339,17 +348,22 @@ impl Frame {
     pub fn compact(&mut self) {
         let particles = self.particles_mut();
 
-        let mut left = 0;
-        let mut right = particles.len();
+        let Some(first_null_idx) = particles.iter().position(|p| p.is_null()) else {
+            return;
+        };
 
-        while left < right {
-            if particles[left].is_null() {
-                right -= 1;
-                particles.swap(left, right);
-            } else {
-                left += 1;
+        let mut particle_count = first_null_idx;
+
+        for idx in first_null_idx + 1..particles.len() {
+            if !particles[idx].is_null() {
+                particles[particle_count] = particles[idx];
+                particle_count += 1;
             }
         }
+
+        let raw_size = size_of::<FrameHeader>() + size_of_val(&particles[..particle_count]);
+        self.0.truncate(raw_size);
+        self.header_mut().particle_count = particle_count as u32;
     }
 
     /// Prevent an extra copy by compacting directly into another buffer
@@ -365,12 +379,12 @@ impl Frame {
 
     pub fn clear(&mut self) {
         self.0.truncate(size_of::<FrameHeader>());
-        self.header_mut().particles_count = 0;
+        self.header_mut().particle_count = 0;
     }
 
     pub fn push(&mut self, particle: Particle) {
         self.0.extend_from_slice(bytes_of(&particle));
-        self.header_mut().particles_count += 1;
+        self.header_mut().particle_count += 1;
     }
 
     /// Removes the last `n` particles
