@@ -13,7 +13,7 @@ pub struct ParticleLattice {
 }
 
 impl ParticleLattice {
-    pub fn hex_square(&self, frame: &mut Frame) {
+    pub fn hex_square(&self, frame: &mut Frame, center: Vec2) {
         let total_particle_count = self.particle_count.0 * self.particle_count.1;
         if total_particle_count == 0 {
             return;
@@ -25,7 +25,7 @@ impl ParticleLattice {
         let rx = meta.particles[0].force0_r() * self.distance_factor as f64;
         let ry = f64::sin(f64::consts::PI / 3.) * rx;
 
-        let center = meta.box_size() / 2.;
+        //let center = meta.box_size() / 2.;
         let start = center
             - Vec2::new(
                 rx * (self.particle_count.0 - 1) as f64 / 2.,
@@ -46,7 +46,7 @@ impl ParticleLattice {
         }
     }
 
-    pub fn square(&self, frame: &mut Frame) {
+    pub fn square(&self, frame: &mut Frame, center: Vec2) {
         let total_particle_count = self.particle_count.0 * self.particle_count.1;
         if total_particle_count == 0 {
             return;
@@ -54,7 +54,7 @@ impl ParticleLattice {
 
         let meta = *frame.metadata();
 
-        let center = meta.box_size() / 2.;
+        //let center = meta.box_size() / 2.;
         let r = meta.particles[0].force0_r() * self.distance_factor as f64;
         let start = center
             - Vec2::new(

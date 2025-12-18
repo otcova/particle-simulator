@@ -16,8 +16,8 @@ struct Frontend {
     }
 
     void init_tcp() {
-        new_tcp_client(&reader, &writer, "10.192.196.196:53123");
-        // new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+        //new_tcp_client(&reader, &writer, "10.192.196.196:53123");
+         new_tcp_client(&reader, &writer, "0.0.0.0:53123");
     }
 
     ~Frontend() {

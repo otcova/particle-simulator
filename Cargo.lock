@@ -642,6 +642,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_knob"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "315a754be9706cc4696632b6b1c45955819f85309ed08018535c98e5331cccd5"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "emath"
 version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1787,6 +1796,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_extras",
+ "egui_knob",
  "env_logger",
  "image",
  "log",

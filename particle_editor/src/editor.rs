@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use egui::{
     CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
-    Margin, Modifiers, Pos2, Rect, ScrollArea, SidePanel, Slider, Vec2, WidgetText,
+    Label, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider, Stroke, Vec2,
+    WidgetText, emath,
 };
+use egui_knob::Knob;
 use particle_io::{Frame, FrameMetadata, ParticleLattice};
 use winit::{
     dpi::PhysicalSize,
@@ -19,6 +21,12 @@ use crate::{
     simulation::{Simulation, TimelineFrame},
     wgpu_utils::WgpuContext,
 };
+
+enum EditorTools {
+    Brush,
+    Eraser,
+    Speed,
+}
 
 pub struct Editor {
     gpu: WgpuContext,
@@ -42,6 +50,18 @@ pub struct Editor {
     play_speed: f32,
     auto_play: bool,
     loop_play: bool,
+
+    // drawing related
+    editing: bool,
+    edit_frame: Frame,
+    stroke_width: u32,
+    cur_editor_particle: i64,
+    selected_tool: EditorTools,
+    cur_speed_angle: f32,
+    cur_speed: f32,
+    draw_cursor_shape: i64,
+    /// in 0-1 normalized coordinates
+    line: Vec<Pos2>,
 }
 
 impl Editor {
@@ -81,6 +101,16 @@ impl Editor {
             play_speed: 1e-9,
             auto_play: false,
             loop_play: false,
+
+            editing: true,
+            edit_frame: Frame::new(),
+            stroke_width: 1,
+            cur_editor_particle: 0,
+            selected_tool: EditorTools::Brush,
+            cur_speed_angle: 0.,
+            cur_speed: 0.,
+            draw_cursor_shape: 0,
+            line: Default::default(),
         };
 
         editor.egui.context().style_mut(|style| {
@@ -143,7 +173,7 @@ impl Editor {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
-                    self.playback_panel(ui);
+                    self.bottom_panel(ui);
                 });
         } else {
             SidePanel::left("left").resizable(false).show(ctx, |ui| {
@@ -169,7 +199,7 @@ impl Editor {
                             top: 5,
                             bottom: 5,
                         })
-                        .show(ui, |ui| self.playback_panel(ui));
+                        .show(ui, |ui| self.bottom_panel(ui));
                 });
         }
 
@@ -182,7 +212,7 @@ impl Editor {
         ctx.input_mut(|i| self.keyboard_shortcuts(i));
     }
 
-    fn draw_canvas(&mut self, ui: &egui::Ui, encoder: &mut wgpu::CommandEncoder) {
+    fn draw_canvas(&mut self, ui: &mut egui::Ui, encoder: &mut wgpu::CommandEncoder) {
         let rect_points = ui.available_rect_before_wrap();
 
         let mut rect = Rect::from_min_max(
@@ -222,8 +252,12 @@ impl Editor {
         }
         self.graphics.uniform.frame_time = frame_time;
 
-        self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
-
+        if !self.editing {
+            self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
+        } else {
+            self.graphics
+                .render(&self.gpu, encoder, &self.edit_frame, canvas_rect);
+        }
         let fill = Color32::from_black_alpha(100);
         ui.painter().rect_filled(
             Rect::from_min_max(outter.min, Pos2::new(inner.min.x, inner.max.y)),
@@ -244,6 +278,265 @@ impl Editor {
             Rect::from_min_max(Pos2::new(inner.max.x, inner.min.y), outter.max),
             0,
             fill,
+        );
+
+        if self.editing {
+            // Okay but like, the alternative does not work even remotely the same xd
+            ui.allocate_ui_at_rect(inner, |ui| {
+                self.drawing_logic(ui);
+            });
+        }
+    }
+
+    fn drawing_logic(&mut self, ui: &mut egui::Ui) {
+        let (mut response, painter) =
+            ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
+
+        let to_screen = emath::RectTransform::from_to(
+            Rect::from_min_size(Pos2::ZERO, response.rect.square_proportions()),
+            response.rect,
+        );
+        let from_screen = to_screen.inverse();
+
+        if let Some(pointer_pos) = response.interact_pointer_pos() {
+            let mut canvas_pos = from_screen * pointer_pos;
+            canvas_pos.y = 1.0 - canvas_pos.y;
+            if self.line.last() != Some(&canvas_pos) {
+                // single point (aka non overlaping brush xd)
+                /*if current_line.is_empty() {
+                    current_line.push(canvas_pos);
+                }*/
+                self.line.push(canvas_pos);
+                response.mark_changed();
+            }
+        } else if !self.line.is_empty() {
+            let meta = *self.edit_frame.metadata();
+
+            match self.selected_tool {
+                EditorTools::Brush => {
+                    // loop to find box
+                    let mut bbox_lt: Pos2;
+                    let mut bbox_rb: Pos2;
+
+                    bbox_lt = self.line[0];
+                    bbox_rb = self.line[0];
+                    for p in self.line.iter() {
+                        if p.x < bbox_lt.x {
+                            bbox_lt.x = p.x;
+                        } else if p.x > bbox_rb.x {
+                            bbox_rb.x = p.x;
+                        }
+
+                        if p.y > bbox_lt.y {
+                            bbox_lt.y = p.y;
+                        } else if p.y < bbox_rb.y {
+                            bbox_rb.y = p.y;
+                        }
+                    }
+
+                    let width = bbox_rb.x - bbox_lt.x;
+                    let height = bbox_lt.y - bbox_rb.y;
+
+                    let r = meta.particles[0].force0_r() * self.lattice.distance_factor as f64;
+
+                    let v_width = (width * meta.box_width / (r as f32) + self.stroke_width as f32)
+                        .ceil() as usize;
+                    let v_height = (height * meta.box_height / (r as f32)
+                        + self.stroke_width as f32)
+                        .ceil() as usize;
+                    println!(
+                        "r: {r}, w: {width}, h: {height}, vw: {v_width}, vh: {v_height}, vw*vh: {}",
+                        v_width * v_height
+                    );
+
+                    let mut grid_raw = vec![false; v_width * v_height];
+                    let mut grid_base: Vec<&mut [bool]> =
+                        grid_raw.as_mut_slice().chunks_mut(v_width).collect();
+                    let grid: &mut [&mut [bool]] = grid_base.as_mut_slice();
+
+                    let origin = particle_io::Vec2::new(bbox_lt.x as f64, bbox_rb.y as f64);
+
+                    for point in self.line.iter_mut() {
+                        let cur_stroke = (particle_io::Vec2::new(point.x as f64, point.y as f64)
+                            - origin)
+                            .div_components(particle_io::Vec2::new(width as f64, height as f64));
+
+                        //println!("point: {cur_stroke:?}");
+
+                        let cur_x =
+                            ((v_width - self.stroke_width as usize) as f64 * cur_stroke.x) as usize;
+                        let cur_y = ((v_height - self.stroke_width as usize) as f64 * cur_stroke.y)
+                            as usize;
+                        let x_min = if cur_x >= (self.stroke_width / 2) as usize {
+                            -(self.stroke_width as i32) / 2
+                        } else {
+                            0
+                        };
+
+                        //println!("cur {cur_x} {cur_y}");
+
+                        let x_max = if cur_x + ((self.stroke_width / 2) as usize) < v_width - 1 {
+                            (self.stroke_width as i32) / 2
+                        } else {
+                            (v_width - cur_x - 1) as i32
+                        };
+
+                        let y_min = if cur_y >= (self.stroke_width / 2) as usize {
+                            -(self.stroke_width as i32) / 2
+                        } else {
+                            0
+                        };
+
+                        let y_max = if cur_y + ((self.stroke_width / 2) as usize) < v_height - 1 {
+                            (self.stroke_width as i32) / 2
+                        } else {
+                            (v_height - cur_y - 1) as i32
+                        };
+
+                        //println!("{cur_x}-{cur_y}, {x_min}-{x_max}, {y_min}-{y_max}");
+
+                        for i in y_min..=y_max {
+                            for j in x_min..=x_max {
+                                println!("in {}, {}", cur_y as i32 + i, cur_x as i32 + j);
+                                grid[(cur_y as i32 + i) as usize][(cur_x as i32 + j) as usize] =
+                                    true;
+                            }
+                        }
+                    }
+
+                    for (i, row) in grid.iter().enumerate() {
+                        for (j, col) in row.iter().enumerate() {
+                            if *col {
+                                let pos = origin
+                                    + particle_io::Vec2::new(
+                                        ((j as f32 / v_width as f32) * width) as f64,
+                                        ((i as f32 / v_height as f32) * height) as f64,
+                                    );
+                                println!("{pos:?}");
+                                self.edit_frame.push(meta.new_particle(
+                                    pos.mul_components(meta.box_size()),
+                                    particle_io::Vec2::default(),
+                                    0,
+                                ));
+                            }
+                        }
+                    }
+                    /*
+                    let aux_lattice_part_cnt = self.lattice.particle_count;
+                    self.lattice.particle_count.0 = self.stroke_width as u32;
+                    self.lattice.particle_count.1 = self.stroke_width as u32;
+
+                    for point in self.line.iter() {
+                        let center_stroke = particle_io::Vec2::new(point.x as f64, point.y as f64)
+                            .mul_components(meta.box_size());
+
+                        if self.draw_cursor_shape == 0 {
+                            self.lattice.square(&mut self.edit_frame, center_stroke);
+                        } else if self.draw_cursor_shape == 1 {
+                            self.lattice.hex_square(&mut self.edit_frame, center_stroke);
+                        }
+                    }
+
+                    self.lattice.particle_count = aux_lattice_part_cnt;
+                    */
+                }
+
+                EditorTools::Eraser => {
+                    let lim_x = 10000000 * self.stroke_width;
+                    let lim_y = 10000000 * self.stroke_width;
+
+                    for point in self.line.iter() {
+                        let p_fix_x = (u32::MAX as f64 * point.x as f64).round() as u32;
+                        let p_fix_y = (u32::MAX as f64 * point.y as f64).round() as u32;
+
+                        let mut ind_list: Vec<usize> = Vec::new();
+                        let mut ind = 0;
+
+                        // half skill issue (not knowing how to modify particles during the loop)
+                        // half performance (no shifts happen due to removing in the middle)
+                        for particle in self.edit_frame.particles() {
+                            let dist_x = p_fix_x.abs_diff(particle.x);
+                            let dist_y = p_fix_y.abs_diff(particle.y);
+
+                            if dist_x < lim_x && dist_y < lim_y {
+                                ind_list.push(ind);
+                            }
+                            ind += 1;
+                        }
+
+                        let mut ind_last_particle = self.edit_frame.particles().len();
+                        for ind in ind_list.iter().rev() {
+                            ind_last_particle -= 1;
+                            if *ind == ind_last_particle {
+                                continue;
+                            }
+
+                            // affects graphics due to changing order. Should not be an issue once particles are not overlapping
+                            self.edit_frame
+                                .particles_mut()
+                                .swap(*ind, ind_last_particle);
+                        }
+
+                        self.edit_frame.drop(ind_list.len());
+                    }
+                }
+
+                EditorTools::Speed => {
+                    // Calculate velocity that should be applied to particles
+                    let v_x = (2. * std::f32::consts::PI * self.cur_speed_angle / 360.).cos()
+                        * self.cur_speed;
+                    let v_y = -(2. * std::f32::consts::PI * self.cur_speed_angle / 360.).sin()
+                        * self.cur_speed;
+
+                    let lim_x = 10000000 * self.stroke_width;
+                    let lim_y = 10000000 * self.stroke_width;
+
+                    for point in self.line.iter() {
+                        let p_fix_x = (u32::MAX as f64 * point.x as f64).round() as u32;
+                        let p_fix_y = (u32::MAX as f64 * point.y as f64).round() as u32;
+
+                        for particle in self.edit_frame.particles_mut() {
+                            let dist_x = p_fix_x.abs_diff(particle.x);
+                            let dist_y = p_fix_y.abs_diff(particle.y);
+
+                            if dist_x < lim_x && dist_y < lim_y {
+                                particle.vx = v_x;
+                                particle.vy = v_y;
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.line.clear();
+            response.mark_changed();
+        }
+
+        if self.line.len() >= 2 {
+            let points: Vec<Pos2> = self
+                .line
+                .iter()
+                .map(|p| to_screen * emath::pos2((*p).x, 1. - (*p).y))
+                .collect();
+            let shape = egui::Shape::line(
+                points,
+                Stroke::new(self.stroke_width as f32, Color32::from_rgb(255, 255, 255)),
+            );
+            painter.add(shape);
+        }
+
+        // cool and all but does not appear to be able to display custom ones
+        //response.on_hover_cursor(egui::CursorIcon::Cell);
+        painter.rect_filled(
+            Rect::from_center_size(
+                response
+                    .hover_pos()
+                    .or(Some(Pos2::new(-200., -200.)))
+                    .unwrap(),
+                egui::vec2(self.stroke_width as f32, self.stroke_width as f32), // not accurate
+            ),
+            0,
+            egui::Color32::from_white_alpha(100),
         );
     }
 
@@ -285,13 +578,22 @@ impl Editor {
         if shortcut(Modifiers::NONE, Key::L) {
             let mut frame = Frame::new();
             *frame.metadata_mut() = self.sim_params;
-            self.lattice.hex_square(&mut frame);
+            self.lattice
+                .hex_square(&mut frame, self.sim_params.box_size() / 2.);
             self.backend.write(&frame);
         }
 
         // Disconnect
         if shortcut(Modifiers::NONE, Key::D) {
             self.backend.close_connection();
+        }
+
+        if shortcut(Modifiers::NONE, Key::A) {
+            println!("{:?}", self.line);
+        }
+
+        if shortcut(Modifiers::NONE, Key::M) {
+            println!("{:?}", self.edit_frame.particles().len());
         }
     }
 
@@ -416,17 +718,35 @@ impl Editor {
                     if ui.button("Hexagonal Square").clicked() {
                         let mut frame = Frame::new();
                         *frame.metadata_mut() = editor.sim_params;
-                        editor.lattice.hex_square(&mut frame);
+                        editor
+                            .lattice
+                            .hex_square(&mut frame, editor.sim_params.box_size() / 2.);
                         editor.backend.write(&frame);
                     }
 
                     if ui.button("Square").clicked() {
                         let mut frame = Frame::new();
                         *frame.metadata_mut() = editor.sim_params;
-                        editor.lattice.square(&mut frame);
+                        editor
+                            .lattice
+                            .square(&mut frame, editor.sim_params.box_size() / 2.);
                         editor.backend.write(&frame);
                     }
                 });
+            if !editor.editing {
+                if ui.button("Enter Edit Frame Mode").clicked() {
+                    editor.editing = true;
+
+                    editor.line.clear();
+                    editor.edit_frame = editor.simulation.frame(editor.play_time).frame.clone(); // uhhh
+                }
+            } else {
+                if ui.button("Exit Edit Frame Mode").clicked() {
+                    editor.editing = false;
+
+                    editor.backend.write(&editor.edit_frame);
+                }
+            }
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
@@ -772,147 +1092,271 @@ impl Editor {
         self.num_formatter.fmt(n, unit)
     }
 
-    // can be optimized to only recalculate widgets width when necessary
-    fn playback_panel(&mut self, ui: &mut egui::Ui) {
-        let mut content = |ui: &mut egui::Ui| -> () {
+    fn bottom_panel(&mut self, ui: &mut egui::Ui) {
+        if self.floating_windows {
+            let ctx = &self.egui.context().clone();
+            if !self.editing {
+                egui::Window::new("Playback").show(ctx, |ui| self.playback_panel(ui));
+            } else {
+                egui::Window::new("Editing").show(ctx, |ui| self.editing_panel(ui));
+            }
+        } else {
+            if !self.editing {
+                self.playback_panel(ui);
+            } else {
+                self.editing_panel(ui);
+            }
+        }
+    }
+
+    fn editing_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_top(|ui| {
+            // correct height
             ui.vertical(|ui| {
-                // timeline bar
-
                 ui.horizontal(|ui| {
-                    let t_time = self.simulation.sim_len();
-
-                    let t_time_text = self.num_formatter.raw_string(t_time, "s");
-
-                    let mut cursor = self.play_time;
-
-                    ui.style_mut().spacing.slider_width = 0.;
-                    let resp = ui.add_visible(
-                        false,
-                        egui::Slider::new(&mut cursor, (0.)..=t_time)
-                            .suffix(format!(" /{t_time_text}"))
-                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
-                    );
-
-                    ui.add_space(-resp.rect.width() - 8.);
-                    ui.style_mut().spacing.slider_width =
-                        (0 as f32).max(ui.available_width() - resp.rect.width());
-
-                    if t_time == 0. {
-                        ui.add(
-                            egui::Slider::new(&mut cursor, (0.)..=0.1)
-                                .fixed_decimals(0)
-                                .suffix(format!(" /{t_time_text}"))
-                                .custom_formatter(|_, _| self.num_formatter.raw_string(0., "s")),
-                        );
-                    } else {
-                        ui.add(
-                            egui::Slider::new(&mut cursor, (0.)..=t_time)
-                                .clamping(egui::SliderClamping::Never)
-                                .suffix(format!(" /{t_time_text}"))
-                                .trailing_fill(true)
-                                .custom_formatter(|n, _| {
-                                    self.num_formatter.raw_string(n as f32, "s")
-                                }),
-                        );
-                    }
-
-                    self.play_time = cursor;
+                    ui.label("Stroke:");
+                    ui.style_mut().spacing.interact_size.x = 10.;
+                    ui.add(egui::DragValue::new(&mut self.stroke_width).range((0.)..=10.));
                 });
 
-                // play buttons
                 ui.horizontal(|ui| {
-                    let tot_space = ui.available_width();
-                    let l_ui_p = ui.max_rect().left();
+                    ui.label("Grid Shape");
+                    egui::ComboBox::from_id_salt("Grid Shape")
+                        .width(50.)
+                        .selected_text(if self.draw_cursor_shape == 0 {
+                            "Square"
+                        } else {
+                            "Lettuce :)"
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.draw_cursor_shape, 0, "Square");
+                            ui.selectable_value(&mut self.draw_cursor_shape, 1, "Lettuce :)");
+                        });
+                });
+            });
 
-                    // 22.96875: buttons width (pre-measured/observed)
-                    let speed_space = tot_space / 2.
+            ui.allocate_ui(Vec2::new(250., 20.), |ui| {
+                ui.style_mut().spacing.item_spacing.x = -8.; // not sure why it adds 2x space
+                egui::Grid::new("Draw Tools").show(ui, |ui| {
+                    let resp_brush = ui.add(egui::Button::image(egui::Image::new(
+                        egui::include_image!("../icons/draw-brush.png"),
+                    )));
+                    if resp_brush.clicked() {
+                        self.selected_tool = EditorTools::Brush;
+                    };
+
+                    let resp_erase = ui.add(egui::Button::image(egui::Image::new(
+                        egui::include_image!("../icons/draw-eraser.png"),
+                    )));
+                    if resp_erase.clicked() {
+                        self.selected_tool = EditorTools::Eraser;
+                    };
+                    ui.end_row();
+                    let resp_speed = ui.add(egui::Button::image(egui::Image::new(
+                        egui::include_image!("../icons/speedometer.png"),
+                    )));
+                    if resp_speed.clicked() {
+                        self.selected_tool = EditorTools::Speed;
+                    };
+
+                    match self.selected_tool {
+                        EditorTools::Brush => resp_brush.highlight(),
+                        EditorTools::Eraser => resp_erase.highlight(),
+                        EditorTools::Speed => resp_speed.highlight(),
+                    }
+                });
+            });
+
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match self.selected_tool {
+                    EditorTools::Brush => {
+                        egui::ComboBox::from_label("Particle:")
+                            .width(50.)
+                            .selected_text(self.cur_editor_particle.to_string())
+                            .show_ui(ui, |ui| {
+                                for id in 0..self.sim_params.particles.len() {
+                                    ui.selectable_value(
+                                        &mut self.cur_editor_particle,
+                                        id as i64,
+                                        id.to_string(),
+                                    );
+                                }
+                            });
+                        ui.add(
+                            egui::DragValue::new(&mut self.lattice.distance_factor)
+                                .range(0.5..=10.0)
+                                .speed(0.02),
+                        );
+                        ui.label("Distance factor");
+                    }
+                    EditorTools::Eraser => {
+                        ui.add_visible(false, Label::new("text")); // so it stfu
+                    }
+                    EditorTools::Speed => {
+                        ui.add(
+                            Knob::new(
+                                &mut self.cur_speed_angle,
+                                0.,
+                                360.,
+                                egui_knob::KnobStyle::Wiper,
+                            )
+                            .with_show_filled_segments(false)
+                            .with_sweep_range(0.75, 1.)
+                            .with_size(30.)
+                            // else it places on the bottom :)
+                            .with_label("", egui_knob::LabelPosition::Right),
+                        );
+
+                        if self.cur_speed_angle >= 360. {
+                            self.cur_speed_angle -= 360.;
+                        }
+
+                        ui.add(
+                            egui::DragValue::new(&mut self.cur_speed)
+                                .range(0.0..=1000.0)
+                                .speed(0.1),
+                        );
+                    }
+                },
+            );
+        });
+    }
+
+    // can be optimized to only recalculate widgets width when necessary
+    fn playback_panel(&mut self, ui: &mut egui::Ui) {
+        ui.vertical(|ui| {
+            // timeline bar
+
+            ui.horizontal(|ui| {
+                let t_time = self.simulation.sim_len();
+
+                let t_time_text = self.num_formatter.raw_string(t_time, "s");
+
+                let mut cursor = self.play_time;
+
+                ui.style_mut().spacing.slider_width = 0.;
+                let resp = ui.add_visible(
+                    false,
+                    egui::Slider::new(&mut cursor, (0.)..=t_time)
+                        .suffix(format!(" /{t_time_text}"))
+                        .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
+                );
+
+                ui.add_space(-resp.rect.width() - 8.);
+                ui.style_mut().spacing.slider_width =
+                    (0 as f32).max(ui.available_width() - resp.rect.width());
+
+                if t_time == 0. {
+                    ui.add(
+                        egui::Slider::new(&mut cursor, (0.)..=0.1)
+                            .fixed_decimals(0)
+                            .suffix(format!(" /{t_time_text}"))
+                            .custom_formatter(|_, _| self.num_formatter.raw_string(0., "s")),
+                    );
+                } else {
+                    ui.add(
+                        egui::Slider::new(&mut cursor, (0.)..=t_time)
+                            .clamping(egui::SliderClamping::Never)
+                            .suffix(format!(" /{t_time_text}"))
+                            .trailing_fill(true)
+                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s")),
+                    );
+                }
+
+                self.play_time = cursor;
+            });
+
+            // play buttons
+            ui.horizontal(|ui| {
+                let tot_space = ui.available_width();
+                let l_ui_p = ui.max_rect().left();
+
+                // 22.96875: buttons width (pre-measured/observed)
+                let speed_space = tot_space / 2.
                         - (4. * (22.96875) / 2. + 3. * 8. / 2.) // entire button area width (except speed)
                         + (22.96875 / 2. + 8. / 2.); // to have the play button on center
 
-                    const MIN_SPEED: f32 = 1e-15;
-                    const MAX_SPEED: f32 = 1.0;
+                const MIN_SPEED: f32 = 1e-15;
+                const MAX_SPEED: f32 = 1.0;
 
-                    ui.style_mut().spacing.item_spacing =
-                        Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
-                    ui.add_space(
-                        -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
-                    );
+                ui.style_mut().spacing.item_spacing =
+                    Vec2::new(8.5 + ui.style().spacing.icon_width, 0.);
+                ui.add_space(
+                    -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
+                );
 
-                    ui.add(
-                        egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
-                            .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
-                            .logarithmic(true),
-                    );
+                ui.add(
+                    egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
+                        .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
+                        .logarithmic(true),
+                );
 
-                    ui.style_mut().spacing.item_spacing = Vec2::new(8., 0.);
+                ui.style_mut().spacing.item_spacing = Vec2::new(8., 0.);
 
-                    if ui
-                        .put(
-                            egui::Rect::from_min_max(
-                                Pos2 {
-                                    x: l_ui_p + speed_space,
-                                    y: ui.cursor().top(),
-                                },
-                                Pos2 {
-                                    x: l_ui_p + speed_space + 22.96875,
-                                    y: ui.cursor().bottom(),
-                                },
-                            ),
-                            egui::Button::image(egui::Image::new(egui::include_image!(
-                                "../icons/media-seek-backward.png"
-                            ))),
-                        )
-                        .clicked()
+                if ui
+                    .put(
+                        egui::Rect::from_min_max(
+                            Pos2 {
+                                x: l_ui_p + speed_space,
+                                y: ui.cursor().top(),
+                            },
+                            Pos2 {
+                                x: l_ui_p + speed_space + 22.96875,
+                                y: ui.cursor().bottom(),
+                            },
+                        ),
+                        egui::Button::image(egui::Image::new(egui::include_image!(
+                            "../icons/media-seek-backward.png"
+                        ))),
+                    )
+                    .clicked()
+                {
+                    self.play_time = (self.play_time - self.play_speed).max(0.);
+                };
+
+                if ui
+                    .add(egui::Button::image(egui::Image::new(if self.auto_play {
+                        egui::include_image!("../icons/media-playback-pause.png")
+                    } else {
+                        egui::include_image!("../icons/media-playback-start.png")
+                    })))
+                    .clicked()
+                {
+                    self.auto_play = !self.auto_play;
+                }
+
+                if ui
+                    .add(egui::Button::image(egui::Image::new(egui::include_image!(
+                        "../icons/media-seek-forward.png"
+                    ))))
+                    .clicked()
+                {
+                    self.play_time = if self.play_time + self.play_speed > self.simulation.sim_len()
                     {
-                        self.play_time = (self.play_time - self.play_speed).max(0.);
+                        0.
+                    } else {
+                        self.play_time + self.play_speed
                     };
+                }
 
-                    if ui
-                        .add(egui::Button::image(egui::Image::new(if self.auto_play {
-                            egui::include_image!("../icons/media-playback-pause.png")
-                        } else {
-                            egui::include_image!("../icons/media-playback-start.png")
-                        })))
-                        .clicked()
-                    {
-                        self.auto_play = !self.auto_play;
-                    }
-
-                    if ui
-                        .add(egui::Button::image(egui::Image::new(egui::include_image!(
-                            "../icons/media-seek-forward.png"
-                        ))))
-                        .clicked()
-                    {
-                        self.play_time =
-                            if self.play_time + self.play_speed > self.simulation.sim_len() {
-                                0.
-                            } else {
-                                self.play_time + self.play_speed
-                            };
-                    }
-
-                    if ui
-                        .add(egui::Button::image(
-                            egui::Image::new(egui::include_image!(
-                                "../icons/media-playlist-repeat.png"
-                            ))
-                            .tint(Color32::from_gray(if self.loop_play { 255 } else { 0 })),
+                if ui
+                    .add(egui::Button::image(
+                        egui::Image::new(egui::include_image!(
+                            "../icons/media-playlist-repeat.png"
                         ))
-                        .clicked()
-                    {
-                        self.loop_play = !self.loop_play;
-                    };
-                });
+                        .tint(Color32::from_gray(if self.loop_play {
+                            255
+                        } else {
+                            0
+                        })),
+                    ))
+                    .clicked()
+                {
+                    self.loop_play = !self.loop_play;
+                };
             });
-        };
-
-        if self.floating_windows {
-            let ctx = &self.egui.context().clone();
-            egui::Window::new("Playback").show(ctx, content);
-        } else {
-            content(ui);
-        }
+        });
     }
 }
 

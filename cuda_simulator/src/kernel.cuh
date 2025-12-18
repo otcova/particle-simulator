@@ -41,15 +41,15 @@ __host__ __device__ void bucket_kernel(const Particle* src, Particle* dst, Frame
     float2 force = {0., 0.};
 
     force += params.f_wall_force(src[i], frame);
-    
+
     uint32_t bucket_x = (i / BUCKET_CAPACITY) % BUCKETS_X;
     uint32_t bucket_y = (i / BUCKET_CAPACITY) / BUCKETS_X;
-    
+
     int32_t x_min = bucket_x == 0 ? 0 : -1;
     int32_t x_max = bucket_x == BUCKETS_X - 1? 0 : 1;
     int32_t y_min = bucket_y == 0 ? 0 : -1;
     int32_t y_max = bucket_y == BUCKETS_Y - 1? 0 : 1;
-    
+
     for (int32_t y = y_min; y <= y_max; ++y) {
         for (int32_t x = x_min; x <= x_max; ++x) {
             uint32_t bucket_j = ((x + bucket_x) + (y+bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
@@ -62,7 +62,7 @@ __host__ __device__ void bucket_kernel(const Particle* src, Particle* dst, Frame
                 force += params.f2_force(r);
             }
         }
-    } 
+    }
 
     params.f_apply_force(dst[i], src[i], force, frame);
 }

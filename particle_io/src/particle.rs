@@ -373,6 +373,12 @@ impl Frame {
         self.header_mut().particles_count += 1;
     }
 
+    /// Removes the last `n` particles
+    pub fn drop(&mut self, n: usize) {
+        self.0.truncate(self.0.len() - n * size_of::<Particle>());
+        self.header_mut().particles_count -= n as u32;
+    }
+
     /// Reserves space for at least an `additional` number of particles.
     pub fn reserve(&mut self, additional: u32) {
         self.0.reserve(size_of::<Particle>() * additional as usize);
