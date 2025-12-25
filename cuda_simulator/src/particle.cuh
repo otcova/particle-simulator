@@ -9,11 +9,13 @@ constexpr float k_b = 1.380649e-23;
 // C\ =\ \frac{n}{n-m}\left(\frac{n}{m}\right)^{\frac{m}{n-m}}
 // F\left(r\right)
 // =C\cdot p\cdot\frac{m\left(\frac{s}{r}\right)^{m}-n\left(\frac{s}{r}\right)^{n}}{r}
-// V\left(r\right)
-// =C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
+// V\left(r\right) =C\cdot p\left(\left(\frac{s}{r}\right)^{n}-\left(\frac{s}{r}\right)^{m}\right)
 //
 // Force Zero at:
 // x=s\sqrt[n-m]{\frac{n}{m}}
+//
+// Max Attraction force at:
+// x=s\sqrt[n-m]{\frac{\left(n+1\right)n}{\left(m+1\right)m}}
 //
 // # Wolframalpha
 // Partial[\(40)Power[\(40)Divide[s,x]\(41),n]-Power[\(40)Divide[s,x]\(41),m]\(41) ,x]
@@ -63,6 +65,11 @@ struct ParticleParams : MiePotentialParams {
         return C * epsilon * (m * powf(sr, m) - n * powf(sr, n)) / r;
     }
 
+    __host__ __device__ float f_force_repulsive(float r) const {
+        float sr = sigma / r;
+        return C * epsilon * m * powf(sr, m) / r;
+    }
+
     __host__ __device__ float f_ljforce(float r) const {
         // assert(n == 12 && m == 6 && C == 4);
         float f2 = (sigma * sigma) / (r * r);
@@ -96,7 +103,7 @@ struct ParticleParams : MiePotentialParams {
     }
 
     __host__ __device__ void f_apply_force(Particle& dst, Particle src, float2 force,
-            const FrameMetadata& frame) const {
+                                           const FrameMetadata& frame) const {
         float ax = force.x / mass;
         float ay = force.y / mass;
 
@@ -115,17 +122,24 @@ struct ParticleParams : MiePotentialParams {
         dst.ty = src.ty;
     }
 
-    __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const  {
+    __host__ __device__ float2 f_wall_force(Particle p, const FrameMetadata& frame) const {
         const float max = (float)UINT32_MAX;
-        float2 wall_bottom = {0., (p.y / max) * frame.box_height};
-        float2 wall_top = {0., frame.box_height - wall_bottom.y};
-        float2 wall_left = {(p.x / max) * frame.box_width, 0.};
-        float2 wall_right = {frame.box_width - wall_left.x, 0.};
 
-        float2 force = f2_force(wall_bottom);
-        force += f2_force(wall_top);
-        force += f2_force(wall_left);
-        force += f2_force(wall_right);
+        float2 force;
+        if (p.x < UINT32_MAX / 2) {
+            float wall_left = (p.x / max) * frame.box_width;
+            force.x = f_force_repulsive(wall_left);
+        } else {
+            float wall_right = ((UINT32_MAX - p.x) / max) * frame.box_width;
+            force.x = -f_force_repulsive(wall_right);
+        }
+        if (p.y < UINT32_MAX / 2) {
+            float wall_bottom = (p.y / max) * frame.box_height;
+            force.y = f_force_repulsive(wall_bottom);
+        } else {
+            float wall_top = ((UINT32_MAX - p.y) / max) * frame.box_height;
+            force.y = -f_force_repulsive(wall_top);
+        }
         return force;
     }
 
@@ -136,6 +150,17 @@ struct ParticleParams : MiePotentialParams {
     double d_force0_r() {
         double dn = n, dm = m, dsigma = sigma;
         return dsigma * pow(dn / dm, 1. / (dn - dm));
+    }
+
+    float f_max_attraction_r() {
+        float ratio = ((n + 1.f) * n) / ((m + 1.f) * m);
+        return sigma * powf(ratio, 1.f / (n - m));
+    }
+
+    double d_max_attraction_r() {
+        double dn = n, dm = m, dsigma = sigma;
+        double ratio = ((n + 1.) * n) / ((m + 1.) * m);
+        return dsigma * pow(ratio, 1. / (dn - dm));
     }
 };
 
