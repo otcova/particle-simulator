@@ -2,7 +2,6 @@
 #include "kernel.cuh"
 #include "particle_io.h"
 
-
 __host__ __device__ void bucket_move_kernel(const Particle* src, Particle* dst, FrameMetadata frame,
                                             uint32_t particle_count, uint32_t bucket_i) {
     

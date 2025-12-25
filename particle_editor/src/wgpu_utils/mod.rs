@@ -108,13 +108,15 @@ impl WgpuContext {
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.surface_size = new_size;
-        Self::configure_surface(
-            &self.device,
-            &self.surface,
-            self.surface_format,
-            self.surface_size,
-        );
+        if self.surface_size != new_size {
+            self.surface_size = new_size;
+            Self::configure_surface(
+                &self.device,
+                &self.surface,
+                self.surface_format,
+                self.surface_size,
+            );
+        }
     }
 
     pub fn start_frame(&mut self) {

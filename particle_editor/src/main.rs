@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use winit::{
     application::ApplicationHandler,
@@ -19,14 +19,23 @@ mod wgpu_utils;
 #[derive(Default)]
 struct App {
     editor: Option<Editor>,
+    visible: bool,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let attributes = WindowAttributes::default();
+        let fullscreen = env::var("WINIT_FULLSCREEN").ok().is_some_and(|s| s == "y");
+
+        let attributes = WindowAttributes::default()
+            .with_visible(false)
+            .with_title("Particle Editor");
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
+        window.request_redraw();
 
         let editor = pollster::block_on(Editor::new(window));
+        if fullscreen {
+            editor.toggle_fullscreen();
+        }
         self.editor = Some(editor);
     }
 
@@ -44,6 +53,11 @@ impl ApplicationHandler for App {
                 editor.resize(size);
             }
             _ => (),
+        }
+
+        if !self.visible {
+            editor.window().set_visible(true);
+            self.visible = true;
         }
     }
 }
