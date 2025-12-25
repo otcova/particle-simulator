@@ -12,8 +12,8 @@ constexpr DeviceBufferId D_BUFFER_1 = 1;
 constexpr DeviceBufferId D_BUFFER_INTERNAL = 2;
 
 #define BUCKET_CAPACITY_LOG2 4
-#define BUCKETS_X_LOG2 6
-#define BUCKETS_Y_LOG2 6
+#define BUCKETS_X_LOG2 7
+#define BUCKETS_Y_LOG2 7
 #define BUCKET_CAPACITY (1 << BUCKET_CAPACITY_LOG2)
 #define BUCKETS_X (1 << BUCKETS_X_LOG2)
 #define BUCKETS_Y (1 << BUCKETS_Y_LOG2)

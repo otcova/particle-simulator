@@ -76,6 +76,8 @@ impl Editor {
             },
 
             sim_params: FrameMetadata {
+                box_width: 100e-9,
+                box_height: 100e-9,
                 ..Default::default()
             },
 
@@ -450,12 +452,12 @@ impl Editor {
                             ui.horizontal(|ui| {
                                 ui.add(
                                     DragValue::new(&mut editor.lattice.particle_count.0)
-                                        .range(0..=100),
+                                        .range(0..=1000),
                                 );
                                 ui.label("x");
                                 ui.add(
                                     DragValue::new(&mut editor.lattice.particle_count.1)
-                                        .range(0..=100),
+                                        .range(0..=1000),
                                 );
                             });
                             ui.end_row();
