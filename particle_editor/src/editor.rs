@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use particle_io::{FrameHeader, Presets};
+use rand::{Rng, distr::uniform::SampleRange};
+use std::{f32, path::PathBuf, sync::Arc, u32};
 
 use egui::{
-    CentralPanel, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key, KeyboardShortcut,
-    Label, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider, Stroke, Vec2,
-    WidgetText, emath,
+    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key,
+    KeyboardShortcut, Label, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider,
+    Stroke, Vec2, WidgetText, emath,
 };
 use egui_knob::Knob;
 use particle_io::{Frame, FrameMetadata, ParticleLattice};
@@ -22,10 +24,95 @@ use crate::{
     wgpu_utils::WgpuContext,
 };
 
-enum EditorTools {
-    Brush,
-    Eraser,
-    Speed,
+#[derive(Debug)]
+struct EditorTools {
+    brush: Tool,
+    eraser: Tool,
+    speed: Tool,
+}
+
+impl EditorTools {
+    fn new() -> Self {
+        EditorTools {
+            brush: Tool::new(
+                5,
+                5,
+                egui::Color32::from_rgb(0, 0, 200),
+                "../icons/draw-brush.png".to_string(),
+            ),
+            eraser: Tool::new(
+                5,
+                5,
+                egui::Color32::from_rgb(200, 0, 0),
+                "../icons/draw-eraser.png".to_string(),
+            ),
+            speed: Tool::new(
+                5,
+                5,
+                egui::Color32::from_rgb(0, 200, 0),
+                "../icons/speedometer.png".to_string(),
+            ),
+        }
+    }
+
+    fn get_stroke_w(&self, idx: u32) -> u32 {
+        match idx {
+            0 => self.brush.stroke_width,
+            1 => self.eraser.stroke_width,
+            _ => self.speed.stroke_width,
+        }
+    }
+
+    fn get_stroke_w_mut(&mut self, idx: u32) -> &mut u32 {
+        match idx {
+            0 => &mut self.brush.stroke_width,
+            1 => &mut self.eraser.stroke_width,
+            _ => &mut self.speed.stroke_width,
+        }
+    }
+
+    fn get_stroke_h(&self, idx: u32) -> u32 {
+        match idx {
+            0 => self.brush.stroke_height,
+            1 => self.eraser.stroke_height,
+            _ => self.speed.stroke_height,
+        }
+    }
+
+    fn get_stroke_h_mut(&mut self, idx: u32) -> &mut u32 {
+        match idx {
+            0 => &mut self.brush.stroke_height,
+            1 => &mut self.eraser.stroke_height,
+            _ => &mut self.speed.stroke_height,
+        }
+    }
+
+    fn get_stroke_color(&self, idx: u32) -> Color32 {
+        match idx {
+            0 => self.brush.stroke_color,
+            1 => self.eraser.stroke_color,
+            _ => self.speed.stroke_color,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Tool {
+    stroke_width: u32,
+    stroke_height: u32,
+    stroke_color: Color32,
+    icon_path: PathBuf,
+}
+
+impl Tool {
+    fn new(stroke_w: u32, stroke_h: u32, stroke_col: egui::Color32, icon_p: String) -> Self {
+        Self {
+            stroke_width: stroke_w,
+            stroke_height: stroke_h,
+            stroke_color: stroke_col,
+            icon_path: PathBuf::from(icon_p),
+        }
+    }
 }
 
 pub struct Editor {
@@ -54,15 +141,20 @@ pub struct Editor {
 
     // drawing related
     editing: bool,
+    editor_tools: EditorTools,
     edit_frame: Frame,
-    stroke_width: u32,
-    cur_editor_particle: i64,
-    selected_tool: EditorTools,
+    cur_sel_particle: usize,
+    apply_speed: bool,
+    selected_tool: u32,
     cur_speed_angle: f32,
-    cur_speed: f32,
+    speed_random_angle: bool,
     draw_cursor_shape: i64,
+
     /// in 0-1 normalized coordinates
     line: Vec<Pos2>,
+
+    // presets
+    presets: Presets,
 }
 
 impl Editor {
@@ -104,15 +196,17 @@ impl Editor {
             auto_play: false,
             loop_play: false,
 
-            editing: true,
+            editor_tools: EditorTools::new(),
+            editing: false,
             edit_frame: Frame::new(),
-            stroke_width: 1,
-            cur_editor_particle: 0,
-            selected_tool: EditorTools::Brush,
+            cur_sel_particle: 0,
+            selected_tool: 0,
             cur_speed_angle: 0.,
-            cur_speed: 0.,
+            apply_speed: true,
+            speed_random_angle: false,
             draw_cursor_shape: 0,
             line: Default::default(),
+            presets: Presets::new(),
         };
 
         editor.egui.context().style_mut(|style| {
@@ -198,11 +292,7 @@ impl Editor {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
                     self.left_panel(ui);
-<<<<<<< HEAD
                     self.bottom_panel(ui);
-=======
-                    egui::Window::new("Playback").show(ctx, |ui| self.playback_panel(ui));
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
                 });
         } else {
             SidePanel::left("left").resizable(false).show(ctx, |ui| {
@@ -285,34 +375,47 @@ impl Editor {
         }
         self.graphics.uniform.frame_time = frame_time;
 
-<<<<<<< HEAD
         if !self.editing {
             self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
         } else {
             self.graphics
                 .render(&self.gpu, encoder, &self.edit_frame, canvas_rect);
         }
-        let fill = Color32::from_black_alpha(100);
-=======
-        self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
+        //let fill = Color32::from_black_alpha(100);
+        //self.graphics.render(&self.gpu, encoder, frame, canvas_rect);
 
         let cursor_stroke = Stroke::new(1., Color32::from_white_alpha(50));
         let cursor_fill = Color32::from_white_alpha(50);
 
+        // cursor
         if let (Some(mouse), down) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()))
         {
             let max_size = f32::max(inner.width(), inner.height());
-            let radius = self.sim_params.cursor_size * max_size / 2.;
+            if !self.editing {
+                let radius = self.sim_params.cursor_size * max_size / 2.;
 
-            if down || self.cursor_stroke {
-                ui.painter().circle_stroke(mouse, radius, cursor_stroke);
-            }
+                if down || self.cursor_stroke {
+                    ui.painter().circle_stroke(mouse, radius, cursor_stroke);
+                }
 
-            if down {
-                let cursor = (mouse.to_vec2() - inner.min.to_vec2()) / inner.size();
-                self.sim_params.cursor_pos = [cursor.x, 1. - cursor.y];
+                if down {
+                    let cursor = (mouse.to_vec2() - inner.min.to_vec2()) / inner.size();
+                    self.sim_params.cursor_pos = [cursor.x, 1. - cursor.y];
+                } else {
+                    self.sim_params.cursor_pos = [-1., -1.];
+                }
             } else {
-                self.sim_params.cursor_pos = [-1., -1.];
+                let stroke_w = self.editor_tools.get_stroke_w(self.selected_tool);
+                let stroke_h = self.editor_tools.get_stroke_h(self.selected_tool);
+                let max_part_box = self.max_particles_in_box(self.cur_sel_particle);
+                let width = (stroke_w as f32 / max_part_box.0 as f32) * max_size;
+                let height = (stroke_h as f32 / max_part_box.1 as f32) * max_size;
+
+                ui.painter().rect_filled(
+                    Rect::from_center_size(mouse, Vec2::new(width, height)),
+                    0,
+                    cursor_fill,
+                );
             }
         }
 
@@ -332,7 +435,6 @@ impl Editor {
             self.graphics.background_color[2] / 2,
         );
 
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
         ui.painter().rect_filled(
             Rect::from_min_max(outter.min, Pos2::new(inner.min.x, inner.max.y)),
             0,
@@ -362,7 +464,22 @@ impl Editor {
         }
     }
 
+    fn max_particles_in_box(&self, p_type: usize) -> (usize, usize) {
+        let r = self.edit_frame.metadata().particles[p_type].force0_r() as f32
+            * self.lattice.distance_factor;
+        let w = (self.edit_frame.metadata().box_width / r) as usize;
+
+        let h = (self.edit_frame.metadata().box_height / r) as usize;
+        (w, h)
+    }
+
     fn drawing_logic(&mut self, ui: &mut egui::Ui) {
+        let stroke_w = self.editor_tools.get_stroke_w(self.selected_tool);
+        let stroke_h = self.editor_tools.get_stroke_h(self.selected_tool);
+
+        if stroke_w == 0 || stroke_h == 0 {
+            return;
+        }
         let (mut response, painter) =
             ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
 
@@ -375,11 +492,8 @@ impl Editor {
         if let Some(pointer_pos) = response.interact_pointer_pos() {
             let mut canvas_pos = from_screen * pointer_pos;
             canvas_pos.y = 1.0 - canvas_pos.y;
+            canvas_pos = canvas_pos.clamp(Pos2 { x: (0.), y: (0.) }, Pos2 { x: (1.), y: (1.) });
             if self.line.last() != Some(&canvas_pos) {
-                // single point (aka non overlaping brush xd)
-                /*if current_line.is_empty() {
-                    current_line.push(canvas_pos);
-                }*/
                 self.line.push(canvas_pos);
                 response.mark_changed();
             }
@@ -387,7 +501,9 @@ impl Editor {
             let meta = *self.edit_frame.metadata();
 
             match self.selected_tool {
-                EditorTools::Brush => {
+                0 => {
+                    // Brush
+
                     // loop to find box
                     let mut bbox_lt: Pos2;
                     let mut bbox_rb: Pos2;
@@ -408,24 +524,20 @@ impl Editor {
                         }
                     }
 
-                    let width = bbox_rb.x - bbox_lt.x;
-                    let height = bbox_lt.y - bbox_rb.y;
+                    let max_part_box = self.max_particles_in_box(self.cur_sel_particle);
 
-                    let r = meta.particles[0].force0_r() * self.lattice.distance_factor as f64;
+                    let width = 1.; //(bbox_rb.x - bbox_lt.x) as f64; // 1.;
+                    let height = 1.; //(bbox_lt.y - bbox_rb.y) as f64; // 1.;
 
-                    let v_width = (width * meta.box_width / (r as f32) + self.stroke_width as f32)
-                        .ceil() as usize;
-                    let v_height = (height * meta.box_height / (r as f32)
-                        + self.stroke_width as f32)
-                        .ceil() as usize;
-                    println!(
-                        "r: {r}, w: {width}, h: {height}, vw: {v_width}, vh: {v_height}, vw*vh: {}",
-                        v_width * v_height
-                    );
+                    let v_width = (width * max_part_box.0 as f64).ceil() as usize;
+                    let v_height = (height * max_part_box.1 as f64).ceil() as usize;
 
-                    let mut grid_raw = vec![false; v_width * v_height];
+                    let m_width = v_width + stroke_w as usize;
+                    let m_height = v_height + stroke_h as usize;
+
+                    let mut grid_raw = vec![false; m_width * m_height];
                     let mut grid_base: Vec<&mut [bool]> =
-                        grid_raw.as_mut_slice().chunks_mut(v_width).collect();
+                        grid_raw.as_mut_slice().chunks_mut(m_width).collect();
                     let grid: &mut [&mut [bool]] = grid_base.as_mut_slice();
 
                     let origin = particle_io::Vec2::new(bbox_lt.x as f64, bbox_rb.y as f64);
@@ -435,89 +547,76 @@ impl Editor {
                             - origin)
                             .div_components(particle_io::Vec2::new(width as f64, height as f64));
 
-                        //println!("point: {cur_stroke:?}");
+                        let cur_x = ((v_width.saturating_sub((stroke_w / 2) as usize)) as f64
+                            * cur_stroke.x) as usize;
 
-                        let cur_x =
-                            ((v_width - self.stroke_width as usize) as f64 * cur_stroke.x) as usize;
-                        let cur_y = ((v_height - self.stroke_width as usize) as f64 * cur_stroke.y)
-                            as usize;
-                        let x_min = if cur_x >= (self.stroke_width / 2) as usize {
-                            -(self.stroke_width as i32) / 2
+                        let cur_y = ((v_height.saturating_sub((stroke_h / 2) as usize)) as f64
+                            * cur_stroke.y) as usize;
+
+                        let x_min = -(stroke_w as i32) / 2;
+
+                        let x_max = if cur_x < v_width.saturating_sub(stroke_w as usize) {
+                            (stroke_w as i32) / 2
                         } else {
-                            0
+                            (v_width - cur_x) as i32
                         };
 
-                        //println!("cur {cur_x} {cur_y}");
+                        let y_min = -(stroke_h as i32) / 2;
 
-                        let x_max = if cur_x + ((self.stroke_width / 2) as usize) < v_width - 1 {
-                            (self.stroke_width as i32) / 2
+                        let y_max = if cur_y < v_height.saturating_sub(stroke_h as usize) {
+                            (stroke_h as i32) / 2
                         } else {
-                            (v_width - cur_x - 1) as i32
+                            (v_height - cur_y) as i32
                         };
-
-                        let y_min = if cur_y >= (self.stroke_width / 2) as usize {
-                            -(self.stroke_width as i32) / 2
-                        } else {
-                            0
-                        };
-
-                        let y_max = if cur_y + ((self.stroke_width / 2) as usize) < v_height - 1 {
-                            (self.stroke_width as i32) / 2
-                        } else {
-                            (v_height - cur_y - 1) as i32
-                        };
-
-                        //println!("{cur_x}-{cur_y}, {x_min}-{x_max}, {y_min}-{y_max}");
 
                         for i in y_min..=y_max {
                             for j in x_min..=x_max {
-                                println!("in {}, {}", cur_y as i32 + i, cur_x as i32 + j);
-                                grid[(cur_y as i32 + i) as usize][(cur_x as i32 + j) as usize] =
-                                    true;
+                                grid[((stroke_h / 2) as i32 + cur_y as i32 + i) as usize]
+                                    [((stroke_w / 2) as i32 + cur_x as i32 + j) as usize] = true;
                             }
                         }
                     }
+
+                    let rng = &mut rand::rng();
 
                     for (i, row) in grid.iter().enumerate() {
                         for (j, col) in row.iter().enumerate() {
                             if *col {
                                 let pos = origin
+                                    - particle_io::Vec2::new(
+                                        ((stroke_w / 2) as f64 / v_width as f64) * width,
+                                        ((stroke_h / 2) as f64 / v_height as f64) * height,
+                                    )
                                     + particle_io::Vec2::new(
-                                        ((j as f32 / v_width as f32) * width) as f64,
-                                        ((i as f32 / v_height as f32) * height) as f64,
+                                        (j as f64 / v_width as f64) * width,
+                                        (i as f64 / v_height as f64) * height,
                                     );
-                                println!("{pos:?}");
+
+                                if pos.x < 0. || pos.x > 1. || pos.y < 0. || pos.y > 1. {
+                                    continue;
+                                }
+
+                                let speed = if self.apply_speed {
+                                    self.lattice.random_vel(rng)
+                                } else {
+                                    particle_io::Vec2::default()
+                                };
+
                                 self.edit_frame.push(meta.new_particle(
                                     pos.mul_components(meta.box_size()),
-                                    particle_io::Vec2::default(),
+                                    speed,
                                     0,
                                 ));
                             }
                         }
                     }
-                    /*
-                    let aux_lattice_part_cnt = self.lattice.particle_count;
-                    self.lattice.particle_count.0 = self.stroke_width as u32;
-                    self.lattice.particle_count.1 = self.stroke_width as u32;
-
-                    for point in self.line.iter() {
-                        let center_stroke = particle_io::Vec2::new(point.x as f64, point.y as f64)
-                            .mul_components(meta.box_size());
-
-                        if self.draw_cursor_shape == 0 {
-                            self.lattice.square(&mut self.edit_frame, center_stroke);
-                        } else if self.draw_cursor_shape == 1 {
-                            self.lattice.hex_square(&mut self.edit_frame, center_stroke);
-                        }
-                    }
-
-                    self.lattice.particle_count = aux_lattice_part_cnt;
-                    */
                 }
 
-                EditorTools::Eraser => {
-                    let lim_x = 10000000 * self.stroke_width;
-                    let lim_y = 10000000 * self.stroke_width;
+                1 => {
+                    // eraser
+                    let max_part_count = self.max_particles_in_box(self.cur_sel_particle);
+                    let lim_x = stroke_w.saturating_mul(u32::MAX / max_part_count.0 as u32 / 2);
+                    let lim_y = stroke_h.saturating_mul(u32::MAX / max_part_count.1 as u32 / 2);
 
                     for point in self.line.iter() {
                         let p_fix_x = (u32::MAX as f64 * point.x as f64).round() as u32;
@@ -526,8 +625,6 @@ impl Editor {
                         let mut ind_list: Vec<usize> = Vec::new();
                         let mut ind = 0;
 
-                        // half skill issue (not knowing how to modify particles during the loop)
-                        // half performance (no shifts happen due to removing in the middle)
                         for particle in self.edit_frame.particles() {
                             let dist_x = p_fix_x.abs_diff(particle.x);
                             let dist_y = p_fix_y.abs_diff(particle.y);
@@ -545,7 +642,6 @@ impl Editor {
                                 continue;
                             }
 
-                            // affects graphics due to changing order. Should not be an issue once particles are not overlapping
                             self.edit_frame
                                 .particles_mut()
                                 .swap(*ind, ind_last_particle);
@@ -555,15 +651,14 @@ impl Editor {
                     }
                 }
 
-                EditorTools::Speed => {
-                    // Calculate velocity that should be applied to particles
-                    let v_x = (2. * std::f32::consts::PI * self.cur_speed_angle / 360.).cos()
-                        * self.cur_speed;
-                    let v_y = -(2. * std::f32::consts::PI * self.cur_speed_angle / 360.).sin()
-                        * self.cur_speed;
+                _ => {
+                    // speed
+                    let rng = &mut rand::rng();
 
-                    let lim_x = 10000000 * self.stroke_width;
-                    let lim_y = 10000000 * self.stroke_width;
+                    let max_part_count = self.max_particles_in_box(self.cur_sel_particle);
+
+                    let lim_x = stroke_w.saturating_mul(u32::MAX / max_part_count.0 as u32 / 2);
+                    let lim_y = stroke_h.saturating_mul(u32::MAX / max_part_count.1 as u32 / 2);
 
                     for point in self.line.iter() {
                         let p_fix_x = (u32::MAX as f64 * point.x as f64).round() as u32;
@@ -574,8 +669,22 @@ impl Editor {
                             let dist_y = p_fix_y.abs_diff(particle.y);
 
                             if dist_x < lim_x && dist_y < lim_y {
-                                particle.vx = v_x;
-                                particle.vy = v_y;
+                                let v = self
+                                    .lattice
+                                    .velocity
+                                    .clone()
+                                    .sample_single(rng)
+                                    .unwrap_or(0.);
+
+                                let angle = if self.speed_random_angle {
+                                    rng.random_range(0.0..2.0 * f32::consts::PI)
+                                } else {
+                                    self.cur_speed_angle
+                                };
+
+                                let dir = Vec2::from(angle.sin_cos());
+                                particle.vx = dir.x * v;
+                                particle.vy = dir.y * v;
                             }
                         }
                     }
@@ -594,24 +703,14 @@ impl Editor {
                 .collect();
             let shape = egui::Shape::line(
                 points,
-                Stroke::new(self.stroke_width as f32, Color32::from_rgb(255, 255, 255)),
+                Stroke::new(
+                    (5 * stroke_w) as f32,
+                    self.editor_tools.get_stroke_color(self.selected_tool),
+                ),
             );
+
             painter.add(shape);
         }
-
-        // cool and all but does not appear to be able to display custom ones
-        //response.on_hover_cursor(egui::CursorIcon::Cell);
-        painter.rect_filled(
-            Rect::from_center_size(
-                response
-                    .hover_pos()
-                    .or(Some(Pos2::new(-200., -200.)))
-                    .unwrap(),
-                egui::vec2(self.stroke_width as f32, self.stroke_width as f32), // not accurate
-            ),
-            0,
-            egui::Color32::from_white_alpha(100),
-        );
     }
 
     fn keyboard_shortcuts(&mut self, input: &mut egui::InputState) {
@@ -652,8 +751,11 @@ impl Editor {
         if shortcut(Modifiers::NONE, Key::L) {
             let mut frame = Frame::new();
             *frame.metadata_mut() = self.sim_params;
-            self.lattice
-                .hex_square(&mut frame, self.sim_params.box_size() / 2.);
+            self.lattice.hex_square(
+                &mut frame,
+                self.sim_params.box_size() / 2.,
+                self.cur_sel_particle,
+            );
             self.backend.write(&frame);
         }
 
@@ -761,12 +863,12 @@ impl Editor {
                             ui.horizontal(|ui| {
                                 ui.add(
                                     DragValue::new(&mut editor.lattice.particle_count.0)
-                                        .range(0..=100),
+                                        .range(0..=1000),
                                 );
                                 ui.label("x");
                                 ui.add(
                                     DragValue::new(&mut editor.lattice.particle_count.1)
-                                        .range(0..=100),
+                                        .range(0..=1000),
                                 );
                             });
                             ui.end_row();
@@ -791,26 +893,53 @@ impl Editor {
                             ui.end_row();
 
                             editor.lattice.velocity = min_vel..=max_vel;
+
+                            ui.label("Particle:");
+                            egui::ComboBox::from_label("")
+                                .width(50.)
+                                .selected_text(editor.cur_sel_particle.to_string())
+                                .show_ui(ui, |ui| {
+                                    for id in 0..editor.sim_params.particles.len() {
+                                        ui.selectable_value(
+                                            &mut editor.cur_sel_particle,
+                                            id,
+                                            id.to_string(),
+                                        );
+                                    }
+                                });
                         });
 
                     if ui.button("Hexagonal Square").clicked() {
                         let mut frame = Frame::new();
                         *frame.metadata_mut() = editor.sim_params;
-                        editor
-                            .lattice
-                            .hex_square(&mut frame, editor.sim_params.box_size() / 2.);
+                        editor.lattice.hex_square(
+                            &mut frame,
+                            editor.sim_params.box_size() / 2.,
+                            editor.cur_sel_particle,
+                        );
                         editor.backend.write(&frame);
                     }
 
                     if ui.button("Square").clicked() {
                         let mut frame = Frame::new();
                         *frame.metadata_mut() = editor.sim_params;
-                        editor
-                            .lattice
-                            .square(&mut frame, editor.sim_params.box_size() / 2.);
+                        editor.lattice.square(
+                            &mut frame,
+                            editor.sim_params.box_size() / 2.,
+                            editor.cur_sel_particle,
+                        );
                         editor.backend.write(&frame);
                     }
                 });
+
+            CollapsingHeader::new("Custom Presets")
+                .default_open(false)
+                .show(ui, |ui| {
+                    for i in 0..editor.presets.getPresetsLen() {
+                        ui.button(editor.presets.getPreset(i).name);
+                    }
+                });
+
             if !editor.editing {
                 if ui.button("Enter Edit Frame Mode").clicked() {
                     editor.editing = true;
@@ -1182,7 +1311,6 @@ impl Editor {
         self.num_formatter.fmt(n, unit)
     }
 
-<<<<<<< HEAD
     fn bottom_panel(&mut self, ui: &mut egui::Ui) {
         if self.floating_windows {
             let ctx = &self.egui.context().clone();
@@ -1207,7 +1335,21 @@ impl Editor {
                 ui.horizontal(|ui| {
                     ui.label("Stroke:");
                     ui.style_mut().spacing.interact_size.x = 10.;
-                    ui.add(egui::DragValue::new(&mut self.stroke_width).range((0.)..=10.));
+                    ui.add(
+                        egui::DragValue::new(
+                            self.editor_tools.get_stroke_w_mut(self.selected_tool),
+                        )
+                        .range(0..=1000),
+                    );
+
+                    ui.label("x");
+
+                    ui.add(
+                        egui::DragValue::new(
+                            self.editor_tools.get_stroke_h_mut(self.selected_tool),
+                        )
+                        .range(0..=1000),
+                    );
                 });
 
                 ui.horizontal(|ui| {
@@ -1233,27 +1375,30 @@ impl Editor {
                         egui::include_image!("../icons/draw-brush.png"),
                     )));
                     if resp_brush.clicked() {
-                        self.selected_tool = EditorTools::Brush;
+                        //self.selected_tool = EditorTools::Brush;
+                        self.selected_tool = 0;
                     };
 
                     let resp_erase = ui.add(egui::Button::image(egui::Image::new(
                         egui::include_image!("../icons/draw-eraser.png"),
                     )));
                     if resp_erase.clicked() {
-                        self.selected_tool = EditorTools::Eraser;
+                        //self.selected_tool = EditorTools::Eraser;
+                        self.selected_tool = 1;
                     };
                     ui.end_row();
                     let resp_speed = ui.add(egui::Button::image(egui::Image::new(
                         egui::include_image!("../icons/speedometer.png"),
                     )));
                     if resp_speed.clicked() {
-                        self.selected_tool = EditorTools::Speed;
+                        //self.selected_tool = EditorTools::Speed;
+                        self.selected_tool = 2;
                     };
 
                     match self.selected_tool {
-                        EditorTools::Brush => resp_brush.highlight(),
-                        EditorTools::Eraser => resp_erase.highlight(),
-                        EditorTools::Speed => resp_speed.highlight(),
+                        0 => resp_brush.highlight(),
+                        1 => resp_erase.highlight(),
+                        _ => resp_speed.highlight(),
                     }
                 });
             });
@@ -1261,61 +1406,85 @@ impl Editor {
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| match self.selected_tool {
-                    EditorTools::Brush => {
+                    0 => {
+                        //EditorTools::Brush => {
                         egui::ComboBox::from_label("Particle:")
                             .width(50.)
-                            .selected_text(self.cur_editor_particle.to_string())
+                            .selected_text(self.cur_sel_particle.to_string())
                             .show_ui(ui, |ui| {
                                 for id in 0..self.sim_params.particles.len() {
                                     ui.selectable_value(
-                                        &mut self.cur_editor_particle,
-                                        id as i64,
+                                        &mut self.cur_sel_particle,
+                                        id,
                                         id.to_string(),
                                     );
                                 }
                             });
+                        ui.checkbox(&mut self.apply_speed, "Apply speed");
                         ui.add(
                             egui::DragValue::new(&mut self.lattice.distance_factor)
                                 .range(0.5..=10.0)
                                 .speed(0.02),
                         );
-                        ui.label("Distance factor");
+                        ui.label("Dist factor");
                     }
-                    EditorTools::Eraser => {
-                        ui.add_visible(false, Label::new("text")); // so it stfu
-                    }
-                    EditorTools::Speed => {
+                    1 => {
+                        //EditorTools::Eraser => {
                         ui.add(
-                            Knob::new(
-                                &mut self.cur_speed_angle,
-                                0.,
-                                360.,
-                                egui_knob::KnobStyle::Wiper,
-                            )
-                            .with_show_filled_segments(false)
-                            .with_sweep_range(0.75, 1.)
-                            .with_size(30.)
-                            // else it places on the bottom :)
-                            .with_label("", egui_knob::LabelPosition::Right),
+                            egui::DragValue::new(&mut self.lattice.distance_factor)
+                                .range(0.5..=10.0)
+                                .speed(0.02),
                         );
+                        ui.label("Dist factor");
+                    }
+                    _ => {
+                        //EditorTools::Speed => {
+                        if !self.speed_random_angle {
+                            ui.add(
+                                Knob::new(
+                                    &mut self.cur_speed_angle,
+                                    0.,
+                                    360.,
+                                    egui_knob::KnobStyle::Wiper,
+                                )
+                                .with_show_filled_segments(false)
+                                .with_sweep_range(0.75, 1.)
+                                .with_size(30.)
+                                // else it places on the bottom :)
+                                .with_label("", egui_knob::LabelPosition::Right),
+                            );
+                        }
+
+                        ui.checkbox(&mut self.speed_random_angle, "");
+                        ui.label("Random angle");
 
                         if self.cur_speed_angle >= 360. {
                             self.cur_speed_angle -= 360.;
                         }
 
+                        let mut min_vel = *self.lattice.velocity.start();
+                        let mut max_vel = *self.lattice.velocity.end();
+
+                        ui.add(DragValue::new(&mut max_vel).range(0.0..=1000.0).speed(0.1));
+                        ui.label("Max vel");
+
+                        ui.add(DragValue::new(&mut min_vel).range(0.0..=1000.0).speed(0.1));
+                        ui.label("Min vel");
+
+                        self.lattice.velocity = min_vel..=max_vel;
+
                         ui.add(
-                            egui::DragValue::new(&mut self.cur_speed)
-                                .range(0.0..=1000.0)
-                                .speed(0.1),
+                            egui::DragValue::new(&mut self.lattice.distance_factor)
+                                .range(0.5..=10.0)
+                                .speed(0.02),
                         );
+                        ui.label("Dist factor");
                     }
                 },
             );
         });
     }
 
-=======
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
     // can be optimized to only recalculate widgets width when necessary
     fn playback_panel(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
@@ -1379,12 +1548,8 @@ impl Editor {
                     -(ui.style().spacing.slider_width + ui.style().spacing.icon_width + 8.),
                 );
 
-<<<<<<< HEAD
-                ui.add(
-=======
                 ui.add_enabled(
                     !self.is_interactive(),
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
                     egui::Slider::new(&mut self.play_speed, MIN_SPEED..=MAX_SPEED)
                         .custom_formatter(|n, _| self.num_formatter.raw_string(n as f32, "s/s"))
                         .logarithmic(true),

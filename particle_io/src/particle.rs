@@ -3,11 +3,12 @@ use std::fmt::Display;
 use bytemuck::{
     Pod, Zeroable, bytes_of, cast_slice, cast_slice_mut, checked::from_bytes_mut, from_bytes,
 };
+use serde::{Deserialize, Serialize};
 
 pub type Vec2 = vector2d::Vector2D<f64>;
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug, Default)]
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub struct Particle {
     pub x: u32,
     pub y: u32,
@@ -29,7 +30,7 @@ impl Particle {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, Zeroable, Pod, PartialEq, Default, Debug, Serialize, Deserialize)]
 pub struct MiePotentialParams {
     // Distance (meters) at which V = 0
     pub sigma: f32,
@@ -390,7 +391,7 @@ impl Frame {
     /// Removes the last `n` particles
     pub fn drop(&mut self, n: usize) {
         self.0.truncate(self.0.len() - n * size_of::<Particle>());
-        self.header_mut().particles_count -= n as u32;
+        self.header_mut().particle_count -= n as u32;
     }
 
     /// Reserves space for at least an `additional` number of particles.

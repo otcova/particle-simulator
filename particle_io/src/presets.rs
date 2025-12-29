@@ -1,7 +1,9 @@
 use crate::*;
 use core::{f32, f64};
+use postcard::{from_bytes, to_vec};
 use rand::{Rng, distr::uniform::SampleRange, rngs::ThreadRng};
-use std::ops::RangeInclusive;
+use serde::{Deserialize, Serialize};
+use std::{fs, io::Read, ops::RangeInclusive, path::Path};
 
 pub struct ParticleLattice {
     pub particle_count: (u32, u32),
@@ -13,7 +15,7 @@ pub struct ParticleLattice {
 }
 
 impl ParticleLattice {
-    pub fn hex_square(&self, frame: &mut Frame, center: Vec2) {
+    pub fn hex_square(&self, frame: &mut Frame, center: Vec2, particle_t: usize) {
         let total_particle_count = self.particle_count.0 * self.particle_count.1;
         if total_particle_count == 0 {
             return;
@@ -22,10 +24,9 @@ impl ParticleLattice {
         let meta = *frame.metadata();
 
         // Particle Radius x, y
-        let rx = meta.particles[0].force0_r() * self.distance_factor as f64;
+        let rx = meta.particles[particle_t].force0_r() * self.distance_factor as f64;
         let ry = f64::sin(f64::consts::PI / 3.) * rx;
 
-        //let center = meta.box_size() / 2.;
         let start = center
             - Vec2::new(
                 rx * (self.particle_count.0 - 1) as f64 / 2.,
@@ -46,7 +47,7 @@ impl ParticleLattice {
         }
     }
 
-    pub fn square(&self, frame: &mut Frame, center: Vec2) {
+    pub fn square(&self, frame: &mut Frame, center: Vec2, particle_t: usize) {
         let total_particle_count = self.particle_count.0 * self.particle_count.1;
         if total_particle_count == 0 {
             return;
@@ -55,7 +56,7 @@ impl ParticleLattice {
         let meta = *frame.metadata();
 
         //let center = meta.box_size() / 2.;
-        let r = meta.particles[0].force0_r() * self.distance_factor as f64;
+        let r = meta.particles[particle_t].force0_r() * self.distance_factor as f64;
         let start = center
             - Vec2::new(
                 (self.particle_count.0 - 1) as f64 / 2.,
@@ -74,10 +75,74 @@ impl ParticleLattice {
         }
     }
 
-    fn random_vel(&self, rng: &mut ThreadRng) -> Vec2 {
+    pub fn random_vel(&self, rng: &mut ThreadRng) -> Vec2 {
         let v = self.velocity.clone().sample_single(rng).unwrap_or(0.);
         let angle = rng.random_range(0.0..2.0 * f32::consts::PI);
         let dir = Vec2::from(angle.sin_cos());
         dir * v as f64
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Preset {
+    pub name: String,
+    particles: [MiePotentialParams; 2],
+    particles_list: Vec<Particle>,
+}
+
+pub struct Presets {
+    path: Box<Path>,
+    presets: Vec<Preset>,
+}
+
+impl Presets {
+    pub fn new() -> Presets {
+        Presets {
+            path: Box::from(Path::new("presets")),
+            presets: vec![Preset {
+                name: "aaa".to_string(),
+                particles: [
+                    MiePotentialParams {
+                        // Nitrogen
+                        sigma: 3.609e-10,
+                        epsilon: 105.79 * 1.,
+                        n: 14.08,
+                        m: 6.,
+                    },
+                    MiePotentialParams {
+                        // Argon
+                        sigma: 3.404e-10,
+                        epsilon: 117.84 * 1.,
+                        n: 12.085,
+                        m: 6.,
+                    },
+                ],
+                particles_list: vec![],
+            }],
+        }
+    }
+
+    pub fn readFromDisk(&self) {
+        /*for entry in fs::read_dir(self.path.clone()).unwrap() {
+            let path = entry.unwrap().path();
+            let mut file = fs::File::open(path);
+            let bytes;
+            file.unwrap().read_to_end(bytes);
+            let inp = from_bytes(bytes);
+
+            //self.presets.push(preset);
+        }*/
+    }
+
+    pub fn saveToDisk(&self) {}
+
+    pub fn getPresetsLen(&self) -> usize {
+        self.presets.len()
+    }
+
+    pub fn getPreset(&self, ind: usize) -> Preset {
+        self.presets[ind].clone()
+    }
+
+    pub fn deletePreset(&self, preset: Frame) {}
 }

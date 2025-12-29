@@ -17,3 +17,4 @@ egui_knob = "0.3.6"
 particle_io = { path = "../particle_io" }
 egui_extras = { version = "0.33", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+rand = "0.9"
