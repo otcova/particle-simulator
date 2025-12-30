@@ -3,9 +3,9 @@ use rand::{Rng, distr::uniform::SampleRange};
 use std::{f32, path::PathBuf, sync::Arc, u32};
 
 use egui::{
-    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key,
-    KeyboardShortcut, Label, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider,
-    Stroke, Vec2, WidgetText, emath,
+    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Image, Key,
+    KeyboardShortcut, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider, Stroke,
+    Vec2, WidgetText, emath,
 };
 use egui_knob::Knob;
 use particle_io::{Frame, FrameMetadata, ParticleLattice};
@@ -29,29 +29,16 @@ struct EditorTools {
     brush: Tool,
     eraser: Tool,
     speed: Tool,
+    clear: Tool,
 }
 
 impl EditorTools {
     fn new() -> Self {
         EditorTools {
-            brush: Tool::new(
-                5,
-                5,
-                egui::Color32::from_rgb(0, 0, 200),
-                "../icons/draw-brush.png".to_string(),
-            ),
-            eraser: Tool::new(
-                5,
-                5,
-                egui::Color32::from_rgb(200, 0, 0),
-                "../icons/draw-eraser.png".to_string(),
-            ),
-            speed: Tool::new(
-                5,
-                5,
-                egui::Color32::from_rgb(0, 200, 0),
-                "../icons/speedometer.png".to_string(),
-            ),
+            brush: Tool::new(5, 5, egui::Color32::from_rgb(0, 0, 200)),
+            eraser: Tool::new(5, 5, egui::Color32::from_rgb(200, 0, 0)),
+            speed: Tool::new(5, 5, egui::Color32::from_rgb(0, 200, 0)),
+            clear: Tool::new(1, 1, Color32::WHITE),
         }
     }
 
@@ -59,7 +46,8 @@ impl EditorTools {
         match idx {
             0 => self.brush.stroke_width,
             1 => self.eraser.stroke_width,
-            _ => self.speed.stroke_width,
+            2 => self.speed.stroke_width,
+            _ => self.clear.stroke_width,
         }
     }
 
@@ -67,7 +55,8 @@ impl EditorTools {
         match idx {
             0 => &mut self.brush.stroke_width,
             1 => &mut self.eraser.stroke_width,
-            _ => &mut self.speed.stroke_width,
+            2 => &mut self.speed.stroke_width,
+            _ => &mut self.clear.stroke_width,
         }
     }
 
@@ -75,7 +64,8 @@ impl EditorTools {
         match idx {
             0 => self.brush.stroke_height,
             1 => self.eraser.stroke_height,
-            _ => self.speed.stroke_height,
+            2 => self.speed.stroke_height,
+            _ => self.clear.stroke_height,
         }
     }
 
@@ -83,7 +73,8 @@ impl EditorTools {
         match idx {
             0 => &mut self.brush.stroke_height,
             1 => &mut self.eraser.stroke_height,
-            _ => &mut self.speed.stroke_height,
+            2 => &mut self.speed.stroke_height,
+            _ => &mut self.clear.stroke_height,
         }
     }
 
@@ -91,7 +82,8 @@ impl EditorTools {
         match idx {
             0 => self.brush.stroke_color,
             1 => self.eraser.stroke_color,
-            _ => self.speed.stroke_color,
+            2 => self.speed.stroke_color,
+            _ => Color32::WHITE,
         }
     }
 }
@@ -101,16 +93,14 @@ struct Tool {
     stroke_width: u32,
     stroke_height: u32,
     stroke_color: Color32,
-    icon_path: PathBuf,
 }
 
 impl Tool {
-    fn new(stroke_w: u32, stroke_h: u32, stroke_col: egui::Color32, icon_p: String) -> Self {
+    fn new(stroke_w: u32, stroke_h: u32, stroke_col: egui::Color32) -> Self {
         Self {
             stroke_width: stroke_w,
             stroke_height: stroke_h,
             stroke_color: stroke_col,
-            icon_path: PathBuf::from(icon_p),
         }
     }
 }
@@ -155,6 +145,9 @@ pub struct Editor {
 
     // presets
     presets: Presets,
+    new_preset_from: u32,
+    new_preset_name: String,
+    edit_preset: i32,
 }
 
 impl Editor {
@@ -207,6 +200,9 @@ impl Editor {
             draw_cursor_shape: 0,
             line: Default::default(),
             presets: Presets::new(),
+            new_preset_from: 0,
+            new_preset_name: String::new(),
+            edit_preset: -1,
         };
 
         editor.egui.context().style_mut(|style| {
@@ -224,6 +220,7 @@ impl Editor {
         self.simulation.sim_len() <= self.play_time
             && !self.loop_play
             && self.auto_play
+            && !self.editing
             && self.simulation.frame_count() > 2
     }
 
@@ -238,7 +235,7 @@ impl Editor {
             self.play_time = self.simulation.sim_len();
         }
 
-        if self.auto_play {
+        if self.auto_play && !self.editing {
             let dt = self.egui.context().input(|i| i.unstable_dt);
             self.play_time += dt * self.play_speed;
 
@@ -480,6 +477,9 @@ impl Editor {
         if stroke_w == 0 || stroke_h == 0 {
             return;
         }
+
+        let draw_area = ui.available_size_before_wrap();
+
         let (mut response, painter) =
             ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
 
@@ -555,7 +555,7 @@ impl Editor {
 
                         let x_min = -(stroke_w as i32) / 2;
 
-                        let x_max = if cur_x < v_width.saturating_sub(stroke_w as usize) {
+                        let x_max = if cur_x < v_width.saturating_sub(stroke_w as usize / 2) {
                             (stroke_w as i32) / 2
                         } else {
                             (v_width - cur_x) as i32
@@ -651,7 +651,7 @@ impl Editor {
                     }
                 }
 
-                _ => {
+                2 => {
                     // speed
                     let rng = &mut rand::rng();
 
@@ -689,6 +689,11 @@ impl Editor {
                         }
                     }
                 }
+
+                _ => {
+                    // clear
+                    self.edit_frame.drop(self.edit_frame.particles().len());
+                }
             }
 
             self.line.clear();
@@ -701,15 +706,21 @@ impl Editor {
                 .iter()
                 .map(|p| to_screen * emath::pos2((*p).x, 1. - (*p).y))
                 .collect();
-            let shape = egui::Shape::line(
-                points,
-                Stroke::new(
-                    (5 * stroke_w) as f32,
-                    self.editor_tools.get_stroke_color(self.selected_tool),
-                ),
-            );
 
-            painter.add(shape);
+            let max_part_box = self.max_particles_in_box(self.cur_sel_particle);
+            for p in points {
+                painter.rect_filled(
+                    Rect::from_center_size(
+                        p,
+                        Vec2::new(
+                            draw_area.x * stroke_w as f32 / max_part_box.0 as f32,
+                            draw_area.y * stroke_h as f32 / max_part_box.1 as f32, //5. * stroke_h as f32,
+                        ),
+                    ),
+                    0,
+                    self.editor_tools.get_stroke_color(self.selected_tool),
+                );
+            }
         }
     }
 
@@ -762,14 +773,6 @@ impl Editor {
         // Disconnect
         if shortcut(Modifiers::NONE, Key::D) {
             self.backend.close_connection();
-        }
-
-        if shortcut(Modifiers::NONE, Key::A) {
-            println!("{:?}", self.line);
-        }
-
-        if shortcut(Modifiers::NONE, Key::M) {
-            println!("{:?}", self.edit_frame.particles().len());
         }
     }
 
@@ -932,28 +935,115 @@ impl Editor {
                     }
                 });
 
-            CollapsingHeader::new("Custom Presets")
+            CollapsingHeader::new("User Presets")
                 .default_open(false)
                 .show(ui, |ui| {
-                    for i in 0..editor.presets.getPresetsLen() {
-                        ui.button(editor.presets.getPreset(i).name);
+                    let mut n_presets = editor.presets.get_presets_len();
+                    let mut i = 0;
+                    while i < n_presets {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(editor.presets.get_preset(i).name.clone())
+                                .clicked()
+                            {
+                                // Somehow go from preset to frame
+                                let preset = editor.presets.get_preset(i);
+                                let frame = preset.to_frame();
+                                editor.backend.write(&frame);
+                            }
+                            let mut resp = ui.add(egui::Button::image(egui::Image::new(
+                                egui::include_image!("../icons/edit-entry.png"),
+                            )));
+                            if resp.clicked() {
+                                // edit this preset
+                                editor.editing = true;
+                                editor.line.clear();
+                                editor.edit_preset = i as i32;
+
+                                editor.edit_frame = editor.presets.get_preset(i).to_frame();
+                                editor.new_preset_name = editor.presets.get_preset(i).name.clone();
+                            }
+                            resp = ui.add(egui::Button::image(egui::Image::new(
+                                egui::include_image!("../icons/edit-duplicate.png"),
+                            )));
+                            if resp.clicked() {
+                                // duplicate this preset
+                                let mut preset = editor.presets.get_preset(i).clone();
+                                preset.name = format!("Copy of {}", preset.name);
+                                editor.presets.add_preset(preset);
+                            }
+                            resp = ui.add(egui::Button::image(egui::Image::new(
+                                egui::include_image!("../icons/edit-delete.png"),
+                            )));
+                            if resp.clicked() {
+                                // delete this preset (probably good idea to add confirmation)
+                                editor.presets.delete_preset(i);
+                                n_presets -= 1;
+                            }
+                        });
+                        i += 1;
+                    }
+
+                    if !editor.editing {
+                        ui.horizontal(|ui| {
+                            if ui.button("New preset from:").clicked() {
+                                editor.editing = true;
+                                editor.line.clear();
+                                editor.edit_preset = -1;
+
+                                // from empty frame
+                                if editor.new_preset_from == 0 {
+                                    let mut new_frame = Frame::new();
+                                    *new_frame.metadata_mut() = editor.sim_params;
+                                    editor.edit_frame = new_frame;
+                                } else {
+                                    // current frame
+                                    editor.edit_frame =
+                                        editor.simulation.frame(editor.play_time).frame.clone();
+                                }
+                            }
+                            egui::ComboBox::from_label("")
+                                .width(50.)
+                                .selected_text(if editor.new_preset_from == 0 {
+                                    "empty frame"
+                                } else {
+                                    "current_frame"
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut editor.new_preset_from,
+                                        0,
+                                        "empty frame",
+                                    );
+                                    ui.selectable_value(
+                                        &mut editor.new_preset_from,
+                                        1,
+                                        "current frame",
+                                    );
+                                });
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            if ui.button("Save Frame:").clicked() {
+                                let new_preset = particle_io::Preset::from_frame(
+                                    editor.new_preset_name.clone(),
+                                    &editor.edit_frame,
+                                );
+                                if editor.edit_preset < 0 {
+                                    editor.presets.add_preset(new_preset);
+                                } else {
+                                    editor
+                                        .presets
+                                        .change_preset(new_preset, editor.edit_preset as usize);
+                                }
+
+                                //editor.backend.write(&editor.edit_frame);
+                                editor.editing = false;
+                            }
+                            ui.text_edit_singleline(&mut editor.new_preset_name);
+                        });
                     }
                 });
-
-            if !editor.editing {
-                if ui.button("Enter Edit Frame Mode").clicked() {
-                    editor.editing = true;
-
-                    editor.line.clear();
-                    editor.edit_frame = editor.simulation.frame(editor.play_time).frame.clone(); // uhhh
-                }
-            } else {
-                if ui.button("Exit Edit Frame Mode").clicked() {
-                    editor.editing = false;
-
-                    editor.backend.write(&editor.edit_frame);
-                }
-            }
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
@@ -1394,11 +1484,19 @@ impl Editor {
                         //self.selected_tool = EditorTools::Speed;
                         self.selected_tool = 2;
                     };
+                    let resp_clear = ui.add(egui::Button::image(egui::Image::new(
+                        egui::include_image!("../icons/edit-clear-history.png"),
+                    )));
+                    if resp_clear.clicked() {
+                        //self.selected_tool = EditorTools::Speed;
+                        self.selected_tool = 4;
+                    };
 
                     match self.selected_tool {
                         0 => resp_brush.highlight(),
                         1 => resp_erase.highlight(),
-                        _ => resp_speed.highlight(),
+                        2 => resp_speed.highlight(),
+                        _ => resp_clear.highlight(),
                     }
                 });
             });
@@ -1437,7 +1535,7 @@ impl Editor {
                         );
                         ui.label("Dist factor");
                     }
-                    _ => {
+                    2 => {
                         //EditorTools::Speed => {
                         if !self.speed_random_angle {
                             ui.add(
@@ -1480,6 +1578,7 @@ impl Editor {
                         );
                         ui.label("Dist factor");
                     }
+                    _ => {}
                 },
             );
         });

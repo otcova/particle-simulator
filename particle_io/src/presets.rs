@@ -1,9 +1,7 @@
 use crate::*;
 use core::{f32, f64};
-use postcard::{from_bytes, to_vec};
 use rand::{Rng, distr::uniform::SampleRange, rngs::ThreadRng};
-use serde::{Deserialize, Serialize};
-use std::{fs, io::Read, ops::RangeInclusive, path::Path};
+use std::{ops::RangeInclusive, path::Path};
 
 pub struct ParticleLattice {
     pub particle_count: (u32, u32),
@@ -83,11 +81,42 @@ impl ParticleLattice {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Preset {
     pub name: String,
+    box_size: (f32, f32),
     particles: [MiePotentialParams; 2],
     particles_list: Vec<Particle>,
+}
+
+impl Preset {
+    pub fn to_frame(&self) -> Frame {
+        let mut frame = Frame::new();
+        frame.metadata_mut().box_width = self.box_size.0;
+        frame.metadata_mut().box_height = self.box_size.1;
+        frame.metadata_mut().particles = self.particles;
+
+        frame.reserve(self.particles_list.len() as u32);
+        for p in self.particles_list.iter() {
+            frame.push(*p);
+        }
+
+        frame
+    }
+
+    pub fn from_frame(name: String, frame: &Frame) -> Preset {
+        let b_size = (
+            frame.metadata().box_size().x as f32,
+            frame.metadata().box_size().y as f32,
+        );
+
+        Preset {
+            name: name,
+            box_size: b_size,
+            particles: frame.metadata().particles,
+            particles_list: frame.particles().to_vec(),
+        }
+    }
 }
 
 pub struct Presets {
@@ -101,6 +130,7 @@ impl Presets {
             path: Box::from(Path::new("presets")),
             presets: vec![Preset {
                 name: "aaa".to_string(),
+                box_size: (50e-9, 50e-9),
                 particles: [
                     MiePotentialParams {
                         // Nitrogen
@@ -134,15 +164,29 @@ impl Presets {
         }*/
     }
 
-    pub fn saveToDisk(&self) {}
+    pub fn save_to_disk(&self) {}
 
-    pub fn getPresetsLen(&self) -> usize {
+    pub fn get_presets_len(&self) -> usize {
         self.presets.len()
     }
 
-    pub fn getPreset(&self, ind: usize) -> Preset {
-        self.presets[ind].clone()
+    pub fn get_preset(&self, ind: usize) -> &Preset {
+        &self.presets[ind]
     }
 
-    pub fn deletePreset(&self, preset: Frame) {}
+    pub fn add_preset(&mut self, preset: Preset) {
+        self.presets.push(preset);
+    }
+
+    pub fn delete_preset(&mut self, ind: usize) {
+        self.presets.remove(ind);
+    }
+
+    pub fn change_preset(&mut self, preset: Preset, ind: usize) {
+        // why not
+        if ind >= self.presets.len() {
+            return;
+        }
+        self.presets[ind] = preset;
+    }
 }
