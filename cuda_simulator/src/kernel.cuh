@@ -39,25 +39,9 @@ struct Kernel {
         cudaError_t error = cudaGetDeviceCount(&gpus_count);
         if (error != cudaSuccess) gpus_count = 0;
 
-<<<<<<< HEAD
-    force += params.f_wall_force(src[i], frame);
-
-    uint32_t bucket_x = (i / BUCKET_CAPACITY) % BUCKETS_X;
-    uint32_t bucket_y = (i / BUCKET_CAPACITY) / BUCKETS_X;
-
-    int32_t x_min = bucket_x == 0 ? 0 : -1;
-    int32_t x_max = bucket_x == BUCKETS_X - 1? 0 : 1;
-    int32_t y_min = bucket_y == 0 ? 0 : -1;
-    int32_t y_max = bucket_y == BUCKETS_Y - 1? 0 : 1;
-
-    for (int32_t y = y_min; y <= y_max; ++y) {
-        for (int32_t x = x_min; x <= x_max; ++x) {
-            uint32_t bucket_j = ((x + bucket_x) + (y+bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
-=======
         typedef Particle ParticleBuffer[3][MAX_PARTICLE_COUNT];
         ParticleBuffer* buffer_gpu = NULL;
         ParticleBuffer* buffer_cpu = NULL;
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
 
         if (gpus_count > 0) {
             cudaStreamCreate(&stream);
@@ -72,10 +56,6 @@ struct Kernel {
             h_frame = (FrameHeader*)malloc(packet_size(MAX_PARTICLE_COUNT));
             assert(h_frame);
         }
-<<<<<<< HEAD
-    }
-=======
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
 
         buffer_cpu = (ParticleBuffer*)malloc(sizeof(ParticleBuffer));
         assert(buffer_cpu);
