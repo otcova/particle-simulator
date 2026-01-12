@@ -1,9 +1,9 @@
 use particle_io::{FrameHeader, Presets};
 use rand::{Rng, distr::uniform::SampleRange};
-use std::{f32, path::PathBuf, sync::Arc, u32};
+use std::{f32, sync::Arc, u32};
 
 use egui::{
-    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Image, Key,
+    CentralPanel, Checkbox, CollapsingHeader, Color32, ComboBox, DragValue, Grid, Key,
     KeyboardShortcut, Margin, Modifiers, Pos2, Rect, ScrollArea, Sense, SidePanel, Slider, Stroke,
     Vec2, WidgetText, emath,
 };
@@ -123,6 +123,8 @@ pub struct Editor {
     lattice: ParticleLattice,
     sim_params: FrameMetadata,
 
+    next_send_and_clear: bool,
+
     // play related
     play_time: f32,
     play_speed: f32,
@@ -182,6 +184,8 @@ impl Editor {
             sim_params: FrameMetadata {
                 ..Default::default()
             },
+
+            next_send_and_clear: true,
 
             // play related
             play_time: 0.,
@@ -466,7 +470,11 @@ impl Editor {
             * self.lattice.distance_factor;
         let w = (self.edit_frame.metadata().box_width / r) as usize;
 
-        let h = (self.edit_frame.metadata().box_height / r) as usize;
+        let h = if self.draw_cursor_shape == 0 {
+            (self.edit_frame.metadata().box_height / r) as usize
+        } else {
+            (self.edit_frame.metadata().box_height / (f32::sin(f32::consts::PI / 3.) * r)) as usize
+        };
         (w, h)
     }
 
@@ -563,7 +571,7 @@ impl Editor {
 
                         let y_min = -(stroke_h as i32) / 2;
 
-                        let y_max = if cur_y < v_height.saturating_sub(stroke_h as usize) {
+                        let y_max = if cur_y < v_height.saturating_sub(stroke_h as usize / 2) {
                             (stroke_h as i32) / 2
                         } else {
                             (v_height - cur_y) as i32
@@ -582,13 +590,18 @@ impl Editor {
                     for (i, row) in grid.iter().enumerate() {
                         for (j, col) in row.iter().enumerate() {
                             if *col {
+                                let offset = if self.draw_cursor_shape == 0 || i % 2 == 0 {
+                                    0.
+                                } else {
+                                    1. / 2.
+                                };
                                 let pos = origin
                                     - particle_io::Vec2::new(
                                         ((stroke_w / 2) as f64 / v_width as f64) * width,
                                         ((stroke_h / 2) as f64 / v_height as f64) * height,
                                     )
                                     + particle_io::Vec2::new(
-                                        (j as f64 / v_width as f64) * width,
+                                        ((j as f64 + offset) / v_width as f64) * width,
                                         (i as f64 / v_height as f64) * height,
                                     );
 
@@ -920,6 +933,11 @@ impl Editor {
                             editor.sim_params.box_size() / 2.,
                             editor.cur_sel_particle,
                         );
+
+                        if editor.next_send_and_clear {
+                            editor.simulation.clear();
+                            editor.next_send_and_clear = false;
+                        }
                         editor.backend.write(&frame);
                     }
 
@@ -931,6 +949,11 @@ impl Editor {
                             editor.sim_params.box_size() / 2.,
                             editor.cur_sel_particle,
                         );
+
+                        if editor.next_send_and_clear {
+                            editor.simulation.clear();
+                            editor.next_send_and_clear = false;
+                        }
                         editor.backend.write(&frame);
                     }
                 });
@@ -949,6 +972,11 @@ impl Editor {
                                 // Somehow go from preset to frame
                                 let preset = editor.presets.get_preset(i);
                                 let frame = preset.to_frame();
+
+                                if editor.next_send_and_clear {
+                                    editor.simulation.clear();
+                                    editor.next_send_and_clear = false;
+                                }
                                 editor.backend.write(&frame);
                             }
                             let mut resp = ui.add(egui::Button::image(egui::Image::new(
@@ -1025,16 +1053,26 @@ impl Editor {
                     } else {
                         ui.horizontal(|ui| {
                             if ui.button("Save Frame:").clicked() {
-                                let new_preset = particle_io::Preset::from_frame(
-                                    editor.new_preset_name.clone(),
-                                    &editor.edit_frame,
-                                );
-                                if editor.edit_preset < 0 {
-                                    editor.presets.add_preset(new_preset);
-                                } else {
-                                    editor
-                                        .presets
-                                        .change_preset(new_preset, editor.edit_preset as usize);
+                                match editor.edit_preset {
+                                    n if n <= -2 => {
+                                        editor.backend.write(&editor.edit_frame);
+                                    }
+                                    -1 => {
+                                        let new_preset = particle_io::Preset::from_frame(
+                                            editor.new_preset_name.clone(),
+                                            &editor.edit_frame,
+                                        );
+                                        editor.presets.add_preset(new_preset);
+                                    }
+                                    _ => {
+                                        let new_preset = particle_io::Preset::from_frame(
+                                            editor.new_preset_name.clone(),
+                                            &editor.edit_frame,
+                                        );
+                                        editor
+                                            .presets
+                                            .change_preset(new_preset, editor.edit_preset as usize);
+                                    }
                                 }
 
                                 //editor.backend.write(&editor.edit_frame);
@@ -1044,6 +1082,18 @@ impl Editor {
                         });
                     }
                 });
+
+            ui.checkbox(&mut editor.next_send_and_clear, "clear and send next");
+
+            if ui
+                .add_enabled(!editor.editing, egui::Button::new("Edit & Resend current"))
+                .clicked()
+            {
+                editor.edit_frame = editor.simulation.frame(editor.play_time).frame.clone();
+
+                editor.editing = true;
+                editor.edit_preset = -2;
+            }
         });
 
         self.ui_section(ui, "Parameters", |editor, ui| {
@@ -1429,7 +1479,7 @@ impl Editor {
                         egui::DragValue::new(
                             self.editor_tools.get_stroke_w_mut(self.selected_tool),
                         )
-                        .range(0..=1000),
+                        .range(1..=1000),
                     );
 
                     ui.label("x");
@@ -1438,7 +1488,7 @@ impl Editor {
                         egui::DragValue::new(
                             self.editor_tools.get_stroke_h_mut(self.selected_tool),
                         )
-                        .range(0..=1000),
+                        .range(1..=1000),
                     );
                 });
 
