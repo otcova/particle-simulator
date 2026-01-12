@@ -1,0 +1,15 @@
+leapfrog_integration:
+    type: Web
+    title: Leapfrog integration
+    author: Wikipedia
+    url: 
+        value: https://en.wikipedia.org/wiki/Leapfrog_integration
+        date: 2025-01
+
+mie_potential:
+    type: Web
+    title: Mie potential
+    author: Wikipedia
+    url: 
+      value: https://en.wikipedia.org/wiki/Mie_potential
+      date: 2025-01
