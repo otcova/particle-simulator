@@ -1,5 +1,28 @@
-#set document(title: [Particle Simulator])
-#title()
+#set heading(numbering: "1.")
+#show heading: set block(above: 2em, below: 1em)
+#set page(numbering: "1.")
+#show heading.where(level: 3): set heading(outlined: false, numbering: none)
+
+#let code(body, caption: []) = figure(caption: [#caption #v(1em)], supplement: [Snippet])[
+  #v(1em)
+  #rect(body, stroke: (y: 0.5pt), radius: 5pt, inset: (x: 15pt, y: 10pt))
+]
+
+
+
+#align(center + horizon)[
+  #text(size: 30pt, weight: "bold")[Particle Simulator]
+
+  #v(2em)
+  #text(size: 14pt)[
+    Otger Comas Valls\
+    Uriel Camí Fernández
+  ]
+]
+
+#pagebreak()
+#outline()
+#pagebreak()
 
 #show link: underline
 
