@@ -27,6 +27,8 @@
 #show link: underline
 
 = Abstract/Intro
+- Explain how using parallelism we can increase the amount of particles simulated, but not the speed of such simulation since simulation steps are sequential, so methods like this one that allow for a larger time step with better results are better than duplicating the hardware.
+
 [U]
 == What is this project about.
 In this project we've implemented a pretty simple particle simulator that uses the GPU in order to be able to simulate a lot more particles by using the unmatched parallelism of this type of devices.
