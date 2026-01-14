@@ -10,6 +10,17 @@
 ]
 
 
+#import "@preview/lilaq:0.5.0" as lq
+
+#let s = 3.4
+#let n = 12
+#let m = 6
+#let C = (n / (n - m)) * calc.pow(n / m, m / (n - m))
+#let p = 0.00000118
+
+#let x = lq.linspace(2, 10, num: 200)
+#let y = x.map(x => C * p * (m * calc.pow(s / x, m) - n * calc.pow(s / x, n)) / x)
+
 
 #align(center + horizon)[
   #text(size: 30pt, weight: "bold")[Particle Simulator]
@@ -35,6 +46,80 @@ In this project we've implemented a pretty simple particle simulator that uses t
 == What have we done.
 The project could be divided in two big blocks. On the one hand, we have the relevant part to this subject, the simulator that runs on the gpu (or cpu, more on that later). On the other hand, since it's a particle simulator, half the fun is being able to actually *see* the simulation, and for that purpose we've implemented a visualizer/editor that is responsible to both send what to simulate to the simulator and to display the results. This part of the project has been written in #link("https://rust-lang.org/")[Rust].
 
+
+= Simulation Basics
+
+
+== Mie Potential
+- This is the heart of our simulation. It basically describes how the particles we want to simulate behave.
+- The mie potential describes the interaction between particles
+- The force that particles receive depends on distance and particle type
+- Such force is composed of 2 components (atractive and repulsive)
+- the repulsive force prevents particles from overlaping. It basically a colision force.
+- the atractive force is a weak very short distance force.
+- if particles are hot (have a lot of velocity) this weak atractive force is not enough to hold the particles and therefore the particles can't forma a solid. The process of melting is basically giving enough velocity to the individual particles to escape this short range atractive force.
+- The figure 1 is the plot of such force function.
+- Figure 2 is the same plot but with a 100x zoom out at the y axis.
+- As we can see from figures, the repulsive force increments abruptly at a certain point. Only moving halve an angstrom give us orders of magnitude more force than the maximum atractive force. This is one of the reason why particle simulations real-world-like need very small time steps.
+
+#align(center, grid(
+  columns: 2,
+  gutter: 20pt,
+  align(horizon)[
+    $F(r) = C dot epsilon dot [ m(sigma/r)^m - n(sigma/r)^n]$
+  ],
+  align(left)[
+    *$F(r)$:* Force relative to the distance "r" of the particles\
+    *$sigma$, $epsilon$, $n$, $m$:* Particle parameters, diferent
+    values describe the interaction of diferent particles kinds.
+  ],
+))
+
+#figure(
+  caption: [
+    Plot example of the force between a pair of particles.\
+  ],
+)[
+  #lq.diagram(
+    width: 100%,
+    ylabel: [Force ($N$)],
+    xlabel: [Particle Distance ($angstrom$)],
+    ylim: (-.000001, .000001),
+    xlim: (2, 10),
+    lq.plot(
+      x,
+      y,
+      label: "Complete Mie Force",
+      smooth: true,
+      mark: none,
+    ),
+  )
+  #v(1em)
+]<force_plot>
+
+#figure(
+  caption: [
+    100x zoom out of the force plot (@force_plot).\
+  ],
+)[
+  #lq.diagram(
+    width: 100%,
+    ylabel: [Force ($N$)],
+    xlabel: [Particle Distance ($angstrom$)],
+    ylim: (-.0001, .00001),
+    xlim: (2, 10),
+    lq.plot(
+      x,
+      y,
+      label: "Complete Mie Force",
+      smooth: true,
+      mark: none,
+    ),
+  )
+  #v(1em)
+]
+
+
 = Experiments
 
 == First Working Version [U]
@@ -52,22 +137,29 @@ The backend will, for each frame, do a few iterations over the particles calcula
 
 All the information that the algorithm needs to calculate the force applied to the particles, as well as how many iterations to perform before sending the frame to the editor, is defined in the metadata of the frames and can be adjusted in the editor to change the behaviour of the simulation.
 
-#figure(
-    image("Solid.gif", width: 40%),
-    caption:[Simulating a Solid]
-)
+#grid(
+  columns: 2,
+  figure(
+    image("Solid.gif", width: 90%),
+    caption: [Simulating a solid],
+  ),
+  figure(
+    image("Liquid.gif", width: 90%),
+    caption: [Solid with imperfections\ (some holes and layer shifts)],
+  ),
 
-#figure(
-    image("Liquid.gif", width: 40%),
-    caption:[Simulating a Liquid]
-)
+  figure(
+    image("Liquid.png", width: 90%),
+    caption: [Liquid blob with some evaporated particles],
+  ),
 
-#figure(
-    image("Gas.gif", width: 40%),
-    caption:[Simulating a Gas]
+  figure(
+    image("Gas.gif", width: 90%),
+    caption: [High-Pressure gas],
+  ),
 )
+#v(5em)
 
-#pagebreak()
 == Leapfrog Integration
 
 
@@ -265,6 +357,54 @@ In this attemt 3 we modified the formula to apply only the repulsive component o
 
 This way particles are no longer sucked into the wall before hitting it. They drift towards the wall and are gently pushed back by the repulsive field. This change allowed us to double the $Delta t$ compared to Attempt 2, restoring our simulation speed while maintaining perfect stability.
 
+#v(1em)
+#align(center, grid(
+  columns: 2,
+  gutter: 40pt,
+  figure(caption: [Complete Mie Force])[
+    $F(r) = C dot epsilon dot [ m(sigma/r)^m - n(sigma/r)^n]$
+  ],
+  figure(caption: [Only Repulsive Mie Force])[
+    $F(r) = C dot epsilon dot [ - n(sigma/r)^n ]$
+  ],
+))
+
+
+
+
+
+
+#figure(
+  caption: [
+    Representative plot of the forces between the simulation\
+    particles, and the force between th particles and the walls
+  ],
+)[
+  #lq.diagram(
+    width: 100%,
+    ylabel: [Force ($N$)],
+    xlabel: [Particle Distance ($angstrom$)],
+    ylim: (-.000001, .000001),
+    xlim: (2, 10),
+    lq.plot(
+      x,
+      y,
+      label: "Complete Mie Force",
+      smooth: true,
+      mark: none,
+    ),
+    lq.plot(
+      x,
+      x => C * p * (-n * calc.pow(s / x, n)) / x,
+      label: "Only repulsive Mie Force",
+      smooth: true,
+      mark: none,
+    ),
+  )
+  #v(1em)
+]
+
+
 // TODO: graph of mie force vs repulsive only mie force
 
 
@@ -304,12 +444,13 @@ The editor and the backend communicate using tcp. Unfortunately, we've not come 
 But, if the simulator has to be run in another computer that has a GPU (cough boada cough), it should be as simple as changing the ip inside the `new_tcp_client(&reader, &writer, "0.0.0.0:53123")` by the one that the editor will be running in. If for some reason the editor suddenly stops receiving frames, the ip may have changed (definitively not speaking from experience).
 
 #code(
-    ```c
-    void init_tcp() {
-        // Change this IP ---------------------------------↴
-        is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
-    }
-    ```, caption: "init_tcp function"
+  ```c
+  void init_tcp() {
+      // Change this IP ---------------------------------↴
+      is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+  }
+  ```,
+  caption: "init_tcp function",
 )
 
 If the ip has to be changed, after doing so go to _project_root/cuda_simulator _ and execute make.
@@ -330,28 +471,28 @@ In the Left Panel we can find subsections, which are:
 
 - Editor: Here we can control what to send to the backend to simulate, as well as the ability to create/edit/delete presets. For a first test, you can try to send a Lattice Preset (after adjusting the parameters if wanted) with either the `Hexagonal Square` button (this will create a structure that should resemble a solid, with the particles staying more or less stable) or the `Square` button (this is a bit more random on what happens. Maybe it colapses into a solid similar to a hexagonal square, maybe it explodes).
 
-    There is also the user presets, which is where we can draw or own shapes. If we click in either the second button of an already created preset we will edit that preset, and if we click the `New preset from:` we will create a new preset that depending of what we choose on the right Menu will have either no particles or will contain the particles of the current frame.\
-    Once we've entered "edit mode", the visualizer will become a canvas to edit. The bottom panel instead of having buttons to control the playback, will have tools we can use to edit the frame (brush to add particles, eraser to remove particles, speedometer to modify the speed of particles, and broom to clear the canvas). Each tool has a bunch of options, which hopefully are self explanatory enough to understand.
+  There is also the user presets, which is where we can draw or own shapes. If we click in either the second button of an already created preset we will edit that preset, and if we click the `New preset from:` we will create a new preset that depending of what we choose on the right Menu will have either no particles or will contain the particles of the current frame.\
+  Once we've entered "edit mode", the visualizer will become a canvas to edit. The bottom panel instead of having buttons to control the playback, will have tools we can use to edit the frame (brush to add particles, eraser to remove particles, speedometer to modify the speed of particles, and broom to clear the canvas). Each tool has a bunch of options, which hopefully are self explanatory enough to understand.
 
-    Finally, there is the `clear and send next` button, which clears the simulation "history" when sending the next shape; and the Edit & Resend current, which can be used to quickly change the current simulation frame.
+  Finally, there is the `clear and send next` button, which clears the simulation "history" when sending the next shape; and the Edit & Resend current, which can be used to quickly change the current simulation frame.
 
 - Parameters: Here we have mostly parameters which control the frames metadata. The most useful ones are:
-    - step delta time: How much time passes between each iteration of the simulation (the bigger the faster the simulation will go. Making it to big will most likely explode the simulation)
-    - Steps per frame: Changes how many iterations on the simulation we do before sending it to th editor.
-    - Box width: Width of the box. Might not play nice with the current simulation if used in interactive mode.
-    - Box height: Same as width, but height.
-    - Data structure: Whether to simulate using buckets or compact array. Useful to see the improvement of buckets over naive approach.
-    - Device: whether to run on GPU or CPU. Will probably break the simulation if changed in interactive mode.
-    - GPU threads/block: Allows to adjust how many threads we give to each block.
-    - Particle X: Changes parameters about how the particles interact with each other. (TODO!!! Diem que realment nomes particle 0 s'utilitza?)
+  - step delta time: How much time passes between each iteration of the simulation (the bigger the faster the simulation will go. Making it to big will most likely explode the simulation)
+  - Steps per frame: Changes how many iterations on the simulation we do before sending it to th editor.
+  - Box width: Width of the box. Might not play nice with the current simulation if used in interactive mode.
+  - Box height: Same as width, but height.
+  - Data structure: Whether to simulate using buckets or compact array. Useful to see the improvement of buckets over naive approach.
+  - Device: whether to run on GPU or CPU. Will probably break the simulation if changed in interactive mode.
+  - GPU threads/block: Allows to adjust how many threads we give to each block.
+  - Particle X: Changes parameters about how the particles interact with each other. (TODO!!! Diem que realment nomes particle 0 s'utilitza?)
 
 - Stats: Shows stats about the simulation and current frame.
 
 - Timeline: Mainly useful to see when you have to clear the simulation so it doesn't crash the computer due to missing ram.
 
 - GUI: Allows changing parameters about the gui. Useful/interesting ones are:
-    - Max speed for Color: Will change how fast the particles must be going before their color changes noticeably.
-    - Min Particle Size: So the particles are easier to see. Useful if the box is too big.
+  - Max speed for Color: Will change how fast the particles must be going before their color changes noticeably.
+  - Min Particle Size: So the particles are easier to see. Useful if the box is too big.
 
 On the Visualizer, the main elements are the actual window where the frames will be seen, and the bottom panel which can be showing different things as explained before. The playback buttons are pretty intuitive, so we will not be explaining them.
 
@@ -397,36 +538,36 @@ Finally going into _root_folder/cuda_simulator_ and doing `make` will compile th
 == Simulation
 - Explain the structure of the .c
 - The source of the simulator is in _root_folder/cuda_simulator_, which has the following structure.
-    - `cuda_simulator`: Root folder of the simulator.
-        - `Makefile`: Makefile that compiles the source code of the simulator using nvcc. It can compile into "release" mode and "debug" mode.
+  - `cuda_simulator`: Root folder of the simulator.
+    - `Makefile`: Makefile that compiles the source code of the simulator using nvcc. It can compile into "release" mode and "debug" mode.
 
-        - `build`: Folder where the compiled code will go.
+    - `build`: Folder where the compiled code will go.
 
-        - `src`: Folder where the code of the simulator is.
-            - `cuda_simulator.cu`: Contains the main loop of the simulator.
+    - `src`: Folder where the code of the simulator is.
+      - `cuda_simulator.cu`: Contains the main loop of the simulator.
 
-            - `kernel.cuh`: Has some defines that the rest of the cude uses, as well as functions to abstract the code of the cuda version versus the CPU version.
+      - `kernel.cuh`: Has some defines that the rest of the cude uses, as well as functions to abstract the code of the cuda version versus the CPU version.
 
-            - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
+      - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
 
-            - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
+      - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
 
-            - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
+      - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
 
-            - `lib`: Folder which contains helper code:
-                - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
+      - `lib`: Folder which contains helper code:
+        - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
 
-                - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
+        - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
 
-                - `log.hpp`: used for debugging purposes.
+        - `log.hpp`: used for debugging purposes.
 
 - Show small snippets of kernels TODO:
 
 - To be able to see the improvement in usign a gpu over a cpu (and to help identify whether an issue is caused by the code or hardware undefined behaviour) we wanted to make it so we had a kernel for the cpu and another one for the gpu.
 
-    Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
+  Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
 
-- /*Explain how we use a stream & show a gpu trace*/In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to 
+- /*Explain how we use a stream & show a gpu trace*/ In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to
 
 
 == Editor
