@@ -4,7 +4,7 @@
 
 __host__ __device__ void bucket_move_kernel(const Particle* src, Particle* dst, FrameMetadata frame,
                                             uint32_t particle_count, uint32_t bucket_i) {
-    
+
     uint32_t bucket_x = bucket_i % BUCKETS_X;
     uint32_t bucket_y = bucket_i / BUCKETS_X;
 
@@ -12,7 +12,7 @@ __host__ __device__ void bucket_move_kernel(const Particle* src, Particle* dst, 
     int32_t x_max = bucket_x == BUCKETS_X - 1 ? 0 : 1;
     int32_t y_min = bucket_y == 0 ? 0 : -1;
     int32_t y_max = bucket_y == BUCKETS_Y - 1 ? 0 : 1;
-    
+
     uint32_t i= 0;
 
     for (int32_t y = y_min; y <= y_max; ++y) {
@@ -22,17 +22,17 @@ __host__ __device__ void bucket_move_kernel(const Particle* src, Particle* dst, 
             for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
                 uint32_t j = jj + bucket_j;
                 if (src[j].ty < 0) continue;
-                
+
                 if (src[j].x >> (32 - BUCKETS_X_LOG2) != bucket_x ||
                     src[j].y >> (32 - BUCKETS_Y_LOG2) != bucket_y) continue;
-                
-                
+
+
                 dst[bucket_i*BUCKET_CAPACITY + i++] = src[j];
-                if (i == BUCKET_CAPACITY) return; 
+                if (i == BUCKET_CAPACITY) return;
             }
         }
     }
-    
+
     for (int32_t j = i; j < BUCKET_CAPACITY; ++j) {
         dst[bucket_i*BUCKET_CAPACITY + j].ty = -1;
     }
@@ -46,12 +46,8 @@ __host__ __device__ void bucket_step_kernel(const Particle* src, Particle* dst, 
 
     i = _i;
 
-
-
     dst[i].ty = src[i].ty;
     if (src[i].ty < 0) return;
-
-
 
     const ParticleParams params(frame.particles[0]);
 
@@ -112,7 +108,7 @@ __global__ static void bucket_move_gpu(const Particle* src, Particle* dst, Frame
 
     bucket_move_kernel(src, dst, frame, count, i);
 }
- 
+
 static void bucket_step(const FrameHeader& frame, DeviceBufferId src_id, DeviceBufferId dst_id) {
     switch (frame.metadata.device) {
         case Device::Gpu: {

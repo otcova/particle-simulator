@@ -20,13 +20,8 @@ struct Frontend {
     }
 
     void init_tcp() {
-<<<<<<< HEAD
-        //new_tcp_client(&reader, &writer, "10.192.196.196:53123");
-         new_tcp_client(&reader, &writer, "0.0.0.0:53123");
-=======
-        // is_connected = new_tcp_client(&reader, &writer, "10.192.196.196:53123");
+        // Change this IP ---------------------------------↴
         is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
->>>>>>> 4500d99f078da12b4a539eda075eba378be2d91f
     }
 
     ~Frontend() {
