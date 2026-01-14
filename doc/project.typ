@@ -2,6 +2,7 @@
 #show heading: set block(above: 2em, below: 1em)
 #set page(numbering: "1.")
 #show heading.where(level: 3): set heading(outlined: false, numbering: none)
+#show link: underline
 
 #let code(body, caption: []) = figure(caption: [#caption #v(1em)], supplement: [Snippet])[
   #v(1em)
@@ -24,8 +25,6 @@
 #outline()
 #pagebreak()
 
-#show link: underline
-
 = Abstract/Intro
 - Explain how using parallelism we can increase the amount of particles simulated, but not the speed of such simulation since simulation steps are sequential, so methods like this one that allow for a larger time step with better results are better than duplicating the hardware.
 
@@ -36,12 +35,9 @@ In this project we've implemented a pretty simple particle simulator that uses t
 == What have we done.
 The project could be divided in two big blocks. On the one hand, we have the relevant part to this subject, the simulator that runs on the gpu (or cpu, more on that later). On the other hand, since it's a particle simulator, half the fun is being able to actually *see* the simulation, and for that purpose we've implemented a visualizer/editor that is responsible to both send what to simulate to the simulator and to display the results. This part of the project has been written in #link("https://rust-lang.org/")[Rust].
 
-== What have we seen. TODO:
-Well, since particle simulation is a pretty good application in terms of parallelization, running the simulation in the GPU is a lot faster that on the CPU.
-
 = Experiments
 
-== 1. First Working Version [U]
+== First Working Version [U]
 === Algorithm part
 As a first version, we implemented the simplest algorithm possible. For each particle, we will iterate all other particles and calculate the forces that each pair of particles apply to each other. This algorithm is really simple to implement (a simple loop throught the particle list for each particle) and is also easy to parallelize, as each thread can take care of n_particles / n_threads.
 
@@ -52,13 +48,26 @@ The issue with this algorithm is that it's cost is O(n²). While it's okay at si
 The overview of how the project works is:
 The editor (gui) sends to the "backend" (simulator) a "frame", which contains metadata and the list of particles. The backend will then grab this frame and run the simulation on it.
 
-The backend will, for each frame, do a few iterations over the particles calculating the forces and updating the position. After finishing, it will send the resulting frame to the editor (so it can be displayed). Then it will check if the editor has sent a new frame/scene to simulate, and will then proceed to use the new ones. If not, it continues running the simulation on the previous information.
+The backend will, for each frame, do a few iterations over the particles calculating the forces and updating the position and speed. After finishing, it will send the resulting frame to the editor (so it can be displayed). Then it will check if the editor has sent a new frame/scene to simulate, and will then proceed to use the new one. If not, it continues running the simulation on the previous information.
 
-All the information that the algorithm needs to calculate the force applied to the particle, as well as how many iterations to perform before sending the frame to the editor, is defined in the metadata of the frames and can be adjusted to change the simulation in the editor.
+All the information that the algorithm needs to calculate the force applied to the particles, as well as how many iterations to perform before sending the frame to the editor, is defined in the metadata of the frames and can be adjusted in the editor to change the behaviour of the simulation.
 
-- Explain naive compact implementation with context
-- TODO: screenshot (or gif) solid, liquid & gass
+#figure(
+    image("Solid.gif", width: 40%),
+    caption:[Simulating a Solid]
+)
 
+#figure(
+    image("Liquid.gif", width: 40%),
+    caption:[Simulating a Liquid]
+)
+
+#figure(
+    image("Gas.gif", width: 40%),
+    caption:[Simulating a Gas]
+)
+
+#pagebreak()
 == Leapfrog Integration
 
 
@@ -286,48 +295,137 @@ Our experiments showed that there is a critical limit to this optimization.
 Therefore, this optimization is not a "free" like the others. it is a parameter choice. If we need to simulate a crystal, we must accept the cost of a higher exponent and smaller $Delta t$. If we only need to simulate a gas or a soft liquid, we can lower the exponent to gain performance.
 
 = How to Run
-== Backend setup
+== Backend setup<backend_setup>
 
-The editor and the backend communicate using tcp. Unfortunately, we've not come with a reliable way to auto update the ip that the backend tries to "speak to" and has to be changed manually. The IP to adjust can be found inside the file `frontend.hpp`, in the function `init_tcp()`. By default it will atempt to connect to the own computer, so if the computer has a nvidia GPU, you can just run the simulator on the same computer without issues.
+The editor and the backend communicate using tcp. Unfortunately, we've not come with a reliable way to auto update the ip that the backend tries to "speak to" and has to be changed manually. The IP to adjust can be found inside the file `frontend.hpp` (full path: _root_folder/cuda_simulator/src/lib/frontend.hpp _), in the function `init_tcp()`. By default it will atempt to connect to the own computer, so if the computer has a nvidia GPU, you can just run the simulator on the same computer without issues.
 
 But, if the simulator has to be run in another computer that has a GPU (cough boada cough), it should be as simple as changing the ip inside the `new_tcp_client(&reader, &writer, "0.0.0.0:53123")` by the one that the editor will be running in. If for some reason the editor suddenly stops receiving frames, the ip may have changed (definitively not speaking from experience).
 
-If the ip has to be changed, after doing so go to `project_root/cuda_simulator` and execute make.
+#code(
+    ```c
+    void init_tcp() {
+        // Change this IP ---------------------------------↴
+        is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
+    }
+    ```, caption: "init_tcp function"
+)
+
+If the ip has to be changed, after doing so go to _project_root/cuda_simulator _ and execute make.
 
 == Editor setup
 
-The editor does not need setup.
+The editor does not need setup, as the executable will be provided already.
 
 == Running everything
 === General usage
 
-First, you must have the editor running before the simulator. This is as simple as going into `project_root/build` and running `./particle_editor`. Then, to start the the backend, run `./particle_simulator`.
+First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running `./particle_editor &`. Then, to start the backend, run `./particle_simulator`.
 
-TODO: Program explanation
-- Simple lattice example with explenation
+The editor has two main parts. The Left Panel, where there are mainly controls and information about the simulation / the visualizer. And the Right Panel, which has at the upper part the visualizer of the simulation and below that some controls for moving throught the playback of the simulation.
+
+In the Left Panel we can find subsections, which are:
+- Backend: Mainly useful to se wheter we are connected to the backend or not.
+
+- Editor: Here we can control what to send to the backend to simulate, as well as the ability to create/edit/delete presets. For a first test, you can try to send a Lattice Preset (after adjusting the parameters if wanted) with either the `Hexagonal Square` button (this will create a structure that should resemble a solid, with the particles staying more or less stable) or the `Square` button (this is a bit more random on what happens. Maybe it colapses into a solid similar to a hexagonal square, maybe it explodes).
+
+    There is also the user presets, which is where we can draw or own shapes. If we click in either the second button of an already created preset we will edit that preset, and if we click the `New preset from:` we will create a new preset that depending of what we choose on the right Menu will have either no particles or will contain the particles of the current frame.\
+    Once we've entered "edit mode", the visualizer will become a canvas to edit. The bottom panel instead of having buttons to control the playback, will have tools we can use to edit the frame (brush to add particles, eraser to remove particles, speedometer to modify the speed of particles, and broom to clear the canvas). Each tool has a bunch of options, which hopefully are self explanatory enough to understand.
+
+    Finally, there is the `clear and send next` button, which clears the simulation "history" when sending the next shape; and the Edit & Resend current, which can be used to quickly change the current simulation frame.
+
+- Parameters: Here we have mostly parameters which control the frames metadata. The most useful ones are:
+    - step delta time: How much time passes between each iteration of the simulation (the bigger the faster the simulation will go. Making it to big will most likely explode the simulation)
+    - Steps per frame: Changes how many iterations on the simulation we do before sending it to th editor.
+    - Box width: Width of the box. Might not play nice with the current simulation if used in interactive mode.
+    - Box height: Same as width, but height.
+    - Data structure: Whether to simulate using buckets or compact array. Useful to see the improvement of buckets over naive approach.
+    - Device: whether to run on GPU or CPU. Will probably break the simulation if changed in interactive mode.
+    - GPU threads/block: Allows to adjust how many threads we give to each block.
+    - Particle X: Changes parameters about how the particles interact with each other. (TODO!!! Diem que realment nomes particle 0 s'utilitza?)
+
+- Stats: Shows stats about the simulation and current frame.
+
+- Timeline: Mainly useful to see when you have to clear the simulation so it doesn't crash the computer due to missing ram.
+
+- GUI: Allows changing parameters about the gui. Useful/interesting ones are:
+    - Max speed for Color: Will change how fast the particles must be going before their color changes noticeably.
+    - Min Particle Size: So the particles are easier to see. Useful if the box is too big.
+
+On the Visualizer, the main elements are the actual window where the frames will be seen, and the bottom panel which can be showing different things as explained before. The playback buttons are pretty intuitive, so we will not be explaining them.
+
+What we will be explaining is that there is an *interactive mode*, which gets activated once we are on the current frame of the Timeline and the `loop playback` option is not on (and we are not editing a frame). In this mode, if we adjust the parameters in the `Stats` section of the left panel it will be sent to the simulator in real time. Apart from being nice to be able to see the changes that you are doing affecting the simulation in real time (and also how depending on what you adjust the simulation instantly explodes), in this mode you also can affect the simulation in a more direct way. If you left click on the visualizer, the particles inside the circle that will show up will be pushed away. To control the size of the circle, the `Cursor Size` on the `Stats` section can be changed. Note that making it to big is a really good way to break the simulation.
+
+Finally, note that there are the following keyboard shortcuts:
+- ESC: Close the program.
+- F11: Go fullScreen.
+- Space: Play/Stop the playback.
+- Left arrow: Go back in the playback.
+- Right arrow: Go forward in the playback (or go to the beggining if we are at the last frame).
+- C: Cleat the simulation timeline.
+- L: sends a Lattice preset.
+- D: Disconnects from the backend.
+
 
 === Boada specific (non interactive GPU)
 
-For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Same as in the rest of the subject, we just have to `squeue job.sh`.
+First and foremost, connect to boada using `-X` as ssh option, else the editor... will look a lot less interesting :)
+
+For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Same as in the rest of the subject, we just have to ```bash
+    squeue job.sh
+```
 
 For the rest, same as in general usage.
 
 
 = About the Source Code
 
-[U]
-- General explanation of the project (editor / simulator division)
-- How to obtain the whole source code (github) & the requeremnts to built it all.
+As mentioned before, the project has two big blocks, that being the editor and the simulator. There is also a more secondary block, which is the library that allows both of them to communicate.
+
+The whole source code can be found and downloaded at #link("https://github.com/otcova/particle-simulator"). In order to compile it, a newish version of #link("https://doc.rust-lang.org/cargo/getting-started/installation.html")[cargo] (rust main package manager) will be needed.
+
+The editor can be compiled by going into _root_folder/particle_editor/ _ and running ```bash
+    cargo build --release
+```
+(note: the first time will take up a while, because it has to basically install and compile 400\~ish rust libraries).
+
+In a similar fashion, going into _root_folder/particle_io_ and running the same command will compile the library necessary to communicate the editor and the simulator.
+
+Finally going into _root_folder/cuda_simulator_ and doing `make` will compile the simulator (refer to @backend_setup)
 
 == Simulation
-[U]
 - Explain the structure of the .c
-- Show small snippets of kernels
+- The source of the simulator is in _root_folder/cuda_simulator_, which has the following structure.
+    - `cuda_simulator`: Root folder of the simulator.
+        - `Makefile`: Makefile that compiles the source code of the simulator using nvcc. It can compile into "release" mode and "debug" mode.
+
+        - `build`: Folder where the compiled code will go.
+
+        - `src`: Folder where the code of the simulator is.
+            - `cuda_simulator.cu`: Contains the main loop of the simulator.
+
+            - `kernel.cuh`: Has some defines that the rest of the cude uses, as well as functions to abstract the code of the cuda version versus the CPU version.
+
+            - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
+
+            - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
+
+            - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
+
+            - `lib`: Folder which contains helper code:
+                - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
+
+                - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
+
+                - `log.hpp`: used for debugging purposes.
+
+- Show small snippets of kernels TODO:
+
 - To be able to see the improvement in usign a gpu over a cpu (and to help identify whether an issue is caused by the code or hardware undefined behaviour) we wanted to make it so we had a kernel for the cpu and another one for the gpu.
 
     Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
 
-- Explain how we use a stream & show a gpu trace
+- /*Explain how we use a stream & show a gpu trace*/In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to 
+
 
 == Editor
 [O]
@@ -342,7 +440,7 @@ For the rest, same as in general usage.
 
 = Final overview
 [U]
-- We would have loved to show more cool speedup graphs between versions, but this is not possible to be done fearly when
+- We would have loved to show more cool speedup graphs between versions, but this is not possible to be done fairly when
   1. The max simulation time is increased from a constant to an infinity (leapfrog integration)
   2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
   3. The optimization sacrifices simulation behaviour or acuracy (wall formula & exponent formula).
