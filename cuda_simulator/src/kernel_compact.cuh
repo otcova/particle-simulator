@@ -7,6 +7,20 @@ __host__ __device__ void compact_step_kernel(const Particle* src, Particle* dst,
     const ParticleParams params(frame.particles[0]);
     float2 force = {0., 0.};
 
+    float u32_max = (float)UINT32_MAX;
+    float dx = frame.cursor_pos[0] - float(src[i].x) / u32_max;
+    float dy = frame.cursor_pos[1] - float(src[i].y) / u32_max;
+
+    float sq_dist = dx*dx + dy*dy;
+
+    if (sq_dist < frame.cursor_size*frame.cursor_size/4) {
+        force.x = 8e-12f / (sq_dist + 1.f);
+        force.y = 8e-12f / (sq_dist + 1.f);
+
+        if (dx > 0) force.x = -force.x;
+        if (dy > 0) force.y = -force.y;
+    }
+
     force += params.f_wall_force(src[i], frame);
 
     for (uint32_t j = 0; j < particle_count; ++j) {
