@@ -37,44 +37,67 @@
 #pagebreak()
 
 = Abstract/Intro
-- Explain how using parallelism we can increase the amount of particles simulated, but not the speed of such simulation since simulation steps are sequential, so methods like this one that allow for a larger time step with better results are better than duplicating the hardware.
 
-[U]
-== What is this project about.
-In this project we've implemented a pretty simple particle simulator that uses the GPU in order to be able to simulate a lot more particles by using the unmatched parallelism of this type of devices.
+== What is this project about
 
-== What have we done.
+This project focuses on the implementation and optimization of a simple particle simulator using CUDA to leverage GPU parallelism.
+We experiment on implementing different integration methods for better simulation stability, implement a space-aware data structure to achieve linear-complexity and more.
+
+== What have we done
 The project could be divided in two big blocks. On the one hand, we have the relevant part to this subject, the simulator that runs on the gpu (or cpu, more on that later). On the other hand, since it's a particle simulator, half the fun is being able to actually *see* the simulation, and for that purpose we've implemented a visualizer/editor that is responsible to both send what to simulate to the simulator and to display the results. This part of the project has been written in #link("https://rust-lang.org/")[Rust].
 
+We've been iteratively improving the algorithm of the simulator to allow us (mainly) to simulate more particles, and to make it more stable, since the first versions were quite prone to suddenly stop working.
 
 = Simulation Basics
 
+This section explains some relevant theory about our particle simulator. It give enough context to better comprehend the following sections.
 
 == Mie Potential
-- This is the heart of our simulation. It basically describes how the particles we want to simulate behave.
-- The mie potential describes the interaction between particles
-- The force that particles receive depends on distance and particle type
-- Such force is composed of 2 components (atractive and repulsive)
-- the repulsive force prevents particles from overlaping. It basically a colision force.
-- the atractive force is a weak very short distance force.
-- if particles are hot (have a lot of velocity) this weak atractive force is not enough to hold the particles and therefore the particles can't forma a solid. The process of melting is basically giving enough velocity to the individual particles to escape this short range atractive force.
-- The figure 1 is the plot of such force function.
-- Figure 2 is the same plot but with a 100x zoom out at the y axis.
-- As we can see from figures, the repulsive force increments abruptly at a certain point. Only moving halve an angstrom give us orders of magnitude more force than the maximum atractive force. This is one of the reason why particle simulations real-world-like need very small time steps.
 
-#align(center, grid(
-  columns: 2,
-  gutter: 20pt,
-  align(horizon)[
-    $F(r) = C dot epsilon dot [ m(sigma/r)^m - n(sigma/r)^n]$
-  ],
-  align(left)[
-    *$F(r)$:* Force relative to the distance "r" of the particles\
-    *$sigma$, $epsilon$, $n$, $m$:* Particle parameters, diferent
-    values describe the interaction of diferent particles kinds.
-  ],
-))
 
+At the core of our simulator lies the Mie Potential. It is the fundamental law that describes how every particle interacts with its neighbors. It dictates the behavior of the particles that we simulate.
+
+The Mie potential is a generalized form of the famous Lennard-Jones potential. It calculates the force ($F$) acting on a particle based on its distance ($r$) from another particle. This force is a delicate balance between two opposing components:
+
+- *The Repulsive Force:* A short-range, powerful force that pushes particles apart. This prevents them from overlapping and effectively simulates the "collision" of solid matter.
+
+- *The Attractive Force:* A weaker, longer-range (but still only a few angstroms) force that pulls particles together. This simulates the Van der Waals forces that allow matter to condense into liquids and solids.
+
+
+This interplay of forces allows our simulator to model different states of matter naturally, without explicit programming for "solid" or "liquid" behaviors.
+
+- *Solids:* When particles have low kinetic energy (low temperature), the attractive force traps them in the "potential well" of their neighbors. They vibrate but cannot escape, locking into a lattice structure.
+
+- *Melting:* If we heat the system (increase particle velocity), the kinetic energy of the particles eventually overcomes the weak attractive force. They break free from the lattice and begin to flow, simulating the phase transition from solid to liquid.
+
+
+#v(1em)
+#figure(caption: [Force formula derived from the Mie Potential])[
+  #grid(
+    columns: 2,
+    gutter: 20pt,
+    align(horizon)[
+      $F(r) = C dot epsilon dot [ m(sigma/r)^m - n(sigma/r)^n]$
+    ],
+    align(left)[
+      *$F(r)$:* Force relative to the distance "r" of the particles\
+      *$sigma$, $epsilon$, $n$, $m$:* Particle parameters. Different values describe the\ interaction between different particles of the periodic table.
+    ],
+  )
+  #line(length: 70%, stroke: 0.5pt)
+]
+#v(1em)
+
+
+=== Simulation Limitations
+
+
+To understand why particle simulations are so prone to "exploding," we can look at the shape of this force function.
+
+@force_plot shows the force between two particles as a function of distance. The tip above the X-axis ($"Force" > 0$) represents the attractive region where particles sit comfortably when forming a solid. The curve decreasing sharply to the left is the repulsive region.
+
+
+#v(1em)
 #figure(
   caption: [
     Plot example of the force between a pair of particles.\
@@ -96,6 +119,12 @@ The project could be divided in two big blocks. On the one hand, we have the rel
   )
   #v(1em)
 ]<force_plot>
+#v(1em)
+
+
+When we zoom out the Y-axis by a factor of 100 (@force_wall_plot), the true nature of the simulation challenge becomes visible. The repulsive force does not just increase; it creates a near-vertical "wall". If a particle moves just half an angstrom ($0.5 angstrom$) too close to another, the repulsive force doesn't just double, it spikes by orders of magnitude. This extreme stiffness is why we need such minuscule time steps ($Delta t$). If the time step is too large, a particle might accidentally step deep into this "wall" in a single frame. The resulting calculated force would be astronomically high, causing the particle to be ejected at a physically impossible speed—instantly destroying the simulation.
+
+
 
 #figure(
   caption: [
@@ -117,12 +146,11 @@ The project could be divided in two big blocks. On the one hand, we have the rel
     ),
   )
   #v(1em)
-]
-
+]<force_wall_plot>
 
 = Experiments
 
-== First Working Version [U]
+== First Working Version
 === Algorithm part
 As a first version, we implemented the simplest algorithm possible. For each particle, we will iterate all other particles and calculate the forces that each pair of particles apply to each other. This algorithm is really simple to implement (a simple loop throught the particle list for each particle) and is also easy to parallelize, as each thread can take care of n_particles / n_threads.
 
@@ -137,28 +165,35 @@ The backend will, for each frame, do a few iterations over the particles calcula
 
 All the information that the algorithm needs to calculate the force applied to the particles, as well as how many iterations to perform before sending the frame to the editor, is defined in the metadata of the frames and can be adjusted in the editor to change the behaviour of the simulation.
 
+Below are a few images of different states of matter.
+
 #grid(
   columns: 2,
   figure(
     image("Solid.gif", width: 90%),
     caption: [Simulating a solid],
   ),
-  figure(
-    image("Liquid.gif", width: 90%),
-    caption: [Solid with imperfections\ (some holes and layer shifts)],
-  ),
+  [
+    #figure(
+      image("Liquid.gif", width: 90%),
+      caption: [Solid with imperfections\ (some holes and layer shifts)],
+    )
+    #v(30pt)
+  ],
 
   figure(
     image("Liquid.png", width: 90%),
     caption: [Liquid blob with some evaporated particles],
   ),
-
   figure(
     image("Gas.gif", width: 90%),
     caption: [High-Pressure gas],
   ),
 )
+
 #v(5em)
+
+
 
 == Leapfrog Integration
 
@@ -189,8 +224,6 @@ The visualization is perfect to understand that the leapfrog integration is not 
 
 === The Naive Approach
 Our initial implementation was designed for simplicity to establish a baseline. In this first version, we stored all particles in a single, unstructured linear list. To calculate the forces for any given particle, we had to iterate through the entire list to compute the interaction with every other particle. While easy to implement (@list_force_computation), this approach has a time complexity of $O(N^2)$. As the number of particles $N$ increased, the computational cost grew quadratically, making the simulation unviable for large-scale systems even on powerful hardware.
-
-
 
 #code(
   ```c
@@ -408,10 +441,12 @@ This way particles are no longer sucked into the wall before hitting it. They dr
 // TODO: graph of mie force vs repulsive only mie force
 
 
-== Warp utilization [U]<warp-utilization>
-- Explain how our initial buckets implementation distributes workload on warps.
-- Explain our proposed alternatives that introduce a tradeof of memory locality vs warp distribution.
-- Results?
+== Warp utilization<warp-utilization>
+- The warp utilization (for the buckets version) is not that great, since the particles are usually concentrated in a few buckets, which means that some of the warps will have a lot of work, while others will not have to do anything.
+
+In order to try to remedy this, we tried to change it so that the block 0 would take care of the first particle inside each bucket, block 1 the second particle, block 2 the third.... This way, since all blocks would work on all the buckets, instead of some of them doing all the work every one of them would do more or less equal work.
+
+From our results, it did not appear to make a difference. We assume that due to the memory access pattern being worse, the potential performance improvement from having better warp utilization did not pay off.
 
 == Force Formula: Stiffness vs. Speed
 
@@ -439,7 +474,7 @@ Therefore, this optimization is not a "free" like the others. it is a parameter 
 = How to Run
 == Backend setup<backend_setup>
 
-The editor and the backend communicate using tcp. Unfortunately, we've not come with a reliable way to auto update the ip that the backend tries to "speak to" and has to be changed manually. The IP to adjust can be found inside the file `frontend.hpp` (full path: _root_folder/cuda_simulator/src/lib/frontend.hpp _), in the function `init_tcp()`. By default it will atempt to connect to the own computer, so if the computer has a nvidia GPU, you can just run the simulator on the same computer without issues.
+The editor and the backend communicate using tcp. Unfortunately, we've not come with a reliable way to auto update the ip that the backend tries to "speak to" and has to be changed manually. The IP to adjust can be found inside the file `frontend.hpp` (full path: _project_root/cuda_simulator/src/lib/frontend.hpp _), in the function `init_tcp()`. By default it will atempt to connect to the own computer, so if the computer has a nvidia GPU, you can just run the simulator on the same computer without issues.
 
 But, if the simulator has to be run in another computer that has a GPU (cough boada cough), it should be as simple as changing the ip inside the `new_tcp_client(&reader, &writer, "0.0.0.0:53123")` by the one that the editor will be running in. If for some reason the editor suddenly stops receiving frames, the ip may have changed (definitively not speaking from experience).
 
@@ -462,7 +497,9 @@ The editor does not need setup, as the executable will be provided already.
 == Running everything
 === General usage
 
-First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running `./particle_editor &`. Then, to start the backend, run `./particle_simulator`.
+First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running ```bash
+./particle_editor &``` Then, to start the backend, run ```bash
+./particle_simulator```
 
 The editor has two main parts. The Left Panel, where there are mainly controls and information about the simulation / the visualizer. And the Right Panel, which has at the upper part the visualizer of the simulation and below that some controls for moving throught the playback of the simulation.
 
@@ -478,13 +515,13 @@ In the Left Panel we can find subsections, which are:
 
 - Parameters: Here we have mostly parameters which control the frames metadata. The most useful ones are:
   - step delta time: How much time passes between each iteration of the simulation (the bigger the faster the simulation will go. Making it to big will most likely explode the simulation)
-  - Steps per frame: Changes how many iterations on the simulation we do before sending it to th editor.
+  - Steps per frame: Changes how many iterations on the simulation we do before sending it to the editor.
   - Box width: Width of the box. Might not play nice with the current simulation if used in interactive mode.
   - Box height: Same as width, but height.
   - Data structure: Whether to simulate using buckets or compact array. Useful to see the improvement of buckets over naive approach.
   - Device: whether to run on GPU or CPU. Will probably break the simulation if changed in interactive mode.
   - GPU threads/block: Allows to adjust how many threads we give to each block.
-  - Particle X: Changes parameters about how the particles interact with each other. (TODO!!! Diem que realment nomes particle 0 s'utilitza?)
+  - Particle X: Changes parameters about how the particles interact with each other. Unfortunately we did not implement this fully and only particle 0 matters, as that is what the simulator uses.
 
 - Stats: Shows stats about the simulation and current frame.
 
@@ -513,7 +550,7 @@ Finally, note that there are the following keyboard shortcuts:
 
 First and foremost, connect to boada using `-X` as ssh option, else the editor... will look a lot less interesting :)
 
-For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Same as in the rest of the subject, we just have to ```bash
+For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Equal as in the rest of the subject, we just have to ```bash
     squeue job.sh
 ```
 
@@ -522,53 +559,116 @@ For the rest, same as in general usage.
 
 = About the Source Code
 
-As mentioned before, the project has two big blocks, that being the editor and the simulator. There is also a more secondary block, which is the library that allows both of them to communicate.
+As mentioned before, the project has two big blocks, that being the editor and the simulator. There is also a more secondary block (but necessary), which is the library that allows both of them to communicate.
 
 The whole source code can be found and downloaded at #link("https://github.com/otcova/particle-simulator"). In order to compile it, a newish version of #link("https://doc.rust-lang.org/cargo/getting-started/installation.html")[cargo] (rust main package manager) will be needed.
 
-The editor can be compiled by going into _root_folder/particle_editor/ _ and running ```bash
+The editor can be compiled by going into _project_root/particle_editor/ _ and running ```bash
     cargo build --release
 ```
 (note: the first time will take up a while, because it has to basically install and compile 400\~ish rust libraries).
 
-In a similar fashion, going into _root_folder/particle_io_ and running the same command will compile the library necessary to communicate the editor and the simulator.
+In a similar fashion, going into _project_root/particle_io_ and running the same command will compile the library necessary to communicate the editor and the simulator.
 
-Finally going into _root_folder/cuda_simulator_ and doing `make` will compile the simulator (refer to @backend_setup)
+Finally going into _project_root/cuda_simulator_ and doing `make` will compile the simulator (refer to @backend_setup)
 
 == Simulation
-- Explain the structure of the .c
-- The source of the simulator is in _root_folder/cuda_simulator_, which has the following structure.
+- The source of the simulator is in _project_root/cuda_simulator_, which has the following structure.
   - `cuda_simulator`: Root folder of the simulator.
     - `Makefile`: Makefile that compiles the source code of the simulator using nvcc. It can compile into "release" mode and "debug" mode.
 
-    - `build`: Folder where the compiled code will go.
+  - `build`: Folder where the compiled code will go.
 
-    - `src`: Folder where the code of the simulator is.
+    - `src`: Folder where the source code of the simulator is.
       - `cuda_simulator.cu`: Contains the main loop of the simulator.
 
-      - `kernel.cuh`: Has some defines that the rest of the cude uses, as well as functions to abstract the code of the cuda version versus the CPU version.
+      - `kernel.cuh`: Has some ```c #define``` that the rest of the code uses, as well as functions to abstract the code of the cuda version versus the CPU version.
 
-      - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
+    - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
 
-      - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
+    - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
 
-      - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
+    - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
 
-      - `lib`: Folder which contains helper code:
-        - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
+    - `lib`: Folder which contains helper code:
+      - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
 
-        - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
+      - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
 
-        - `log.hpp`: used for debugging purposes.
+      - `log.hpp`: used for debugging purposes.
 
-- Show small snippets of kernels TODO:
+- Below are the three kernels where calculations happen. As mentioned before, the compact kernel is a lot simpler than the other two. The two `step kernels` are missing the code for adding the walls force, the cursor interaction and the code to apply the force to the position and velocity of the particle at the end of the kernel. In addition, the two `bucket kernels` are missing the code that checks which buckets they should work with (so the buckets next to walls don't try to acces things that they shouldn't).
+
+#code(
+  ```c
+      ...
+      for (uint32_t j = 0; j < particle_count; ++j) {
+          if (j == i) continue;
+
+          float2 r = f_dist(src[i], src[j], frame);
+          force += params.f2_force(r);
+      }
+      ...
+  ```,
+  caption: [compact step kernel],
+)
+
+#code(
+  ```c
+      ...
+      for (int32_t y = y_min; y <= y_max; ++y) {
+          for (int32_t x = x_min; x <= x_max; ++x) {
+              uint32_t bucket_j = ((x + bucket_x) + (y + bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
+
+              for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
+                  uint32_t j = jj + bucket_j;
+                  if (j == i || src[j].ty < 0) continue;
+
+                  float2 r = f_dist(src[i], src[j], frame);
+                  force += params.f2_force(r);
+              }
+          }
+      }
+      ...
+  ```,
+  caption: [bucket step kernel],
+)
+
+#code(
+  ```c
+      ...
+      for (int32_t y = y_min; y <= y_max; ++y) {
+          for (int32_t x = x_min; x <= x_max; ++x) {
+              uint32_t bucket_j = ((x + bucket_x) + (y + bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
+
+              for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
+                  uint32_t j = jj + bucket_j;
+                  if (src[j].ty < 0) continue;
+
+                  if (src[j].x >> (32 - BUCKETS_X_LOG2) != bucket_x ||
+                      src[j].y >> (32 - BUCKETS_Y_LOG2) != bucket_y) continue;
+
+
+                  dst[bucket_i*BUCKET_CAPACITY + i++] = src[j];
+                  if (i == BUCKET_CAPACITY) return;
+              }
+          }
+      }
+      ...
+  ```,
+  caption: [bucket move kernel],
+)
 
 - To be able to see the improvement in usign a gpu over a cpu (and to help identify whether an issue is caused by the code or hardware undefined behaviour) we wanted to make it so we had a kernel for the cpu and another one for the gpu.
 
-  Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
+  Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) and `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
 
-- /*Explain how we use a stream & show a gpu trace*/ In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to
+- In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to start calculating the next frame while we transfer the previous one to the host and then send it to the editor. On the GPU that Uriel has (RTX3050) this does not appear to work, as can be seen on the trace below.
 
+#figure(
+  image("Trace.png"),
+  caption: [Example Trace],
+)
 
 == Editor
 [O]
@@ -586,11 +686,11 @@ Finally going into _root_folder/cuda_simulator_ and doing `make` will compile th
 - Basically since both the editor and the simulator need this communication logic, instead of writing the code twice, we placed the rust files in another project and compile it as a library to be used in c/c++ (the simulator) and rust (the editor).
 
 = Final overview
-[U]
 - We would have loved to show more cool speedup graphs between versions, but this is not possible to be done fairly when
   1. The max simulation time is increased from a constant to an infinity (leapfrog integration)
   2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
-  3. The optimization sacrifices simulation behaviour or acuracy (wall formula & exponent formula).
+  3. The optimization sacrifices simulation behaviour or accuracy (wall formula & exponent formula).
+
 
 == Future Optimizations & Alternative Approaches
 While our current implementation achieves linear complexity and stability, there are other advanced optimization strategies that we considered or identified as potential future improvements.

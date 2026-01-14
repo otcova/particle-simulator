@@ -969,7 +969,6 @@ impl Editor {
                                 .button(editor.presets.get_preset(i).name.clone())
                                 .clicked()
                             {
-                                // Somehow go from preset to frame
                                 let preset = editor.presets.get_preset(i);
                                 let frame = preset.to_frame();
 
