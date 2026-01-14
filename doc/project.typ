@@ -165,7 +165,7 @@ The backend will, for each frame, do a few iterations over the particles calcula
 
 All the information that the algorithm needs to calculate the force applied to the particles, as well as how many iterations to perform before sending the frame to the editor, is defined in the metadata of the frames and can be adjusted in the editor to change the behaviour of the simulation.
 
-Below are a few images of different states of matter.
+Below are a few captures of performed simulations:
 
 #grid(
   columns: 2,
@@ -207,18 +207,24 @@ Without a robust integrator, the simulation is just a static snapshot of forces;
 Our initial implementation relied on Euler integration (a first-order method). While simple to implement, it suffered from severe energy drift.
 
 - *Previous State (Euler):* The simulation would "explode" (particles gaining infinite energy and flying off) within $100p s (= 10^(-10) s)$, even when using extremely small time steps of $1 f s (= 10^(-15) s)$. The error accumulation was too rapid for a stable simulation.
-- *Current State (Leapfrog):* By switching to Leapfrog integration (a second-order symplectic method), we achieved total stability. We have successfully tested simulations for durations of at least $10 n s (= 10^(-8) s)$ using larger time steps of $10 f s (= 10^(-14) s)$ without any "explosion" or significant energy drift. Even so, this does not mean the simulation is perfect, just that the energy drift does not have a trend to increase or decrease indefinitely.
+- *Current State (Leapfrog):* By switching to Leapfrog integration (a second-order symplectic method), we achieved "total stability". We have successfully tested simulations for durations of more than $10 n s (= 10^(-8) s)$ using larger time steps of $10 f s (= 10^(-14) s)$ without any "explosion" or significant energy drift. Even so, this does not mean the simulation is perfect, just that the energy drift does not have a trend to increase or decrease indefinitely.
 
 @leapfrog_vs_euler illustrates a classic test case of $N$ bodies orbiting a point source mass.
-The visualization is perfect to understand that the leapfrog integration is not absent of error, but it's likely to oscilate in over and under compensating producin an asimptotically behaviour.
+The visualization is perfect to understand that the leapfrog integration is not absent of error, but it's more likely to oscillate producing a more or less stable simulation.
 
+#v(1em)
 #figure(
-  image("leapfrog.png", width: 70%),
+  image("leapfrog.png", width: 80%),
   caption: [
-    Comparison of Euler's and Leapfrog integration energy\
-    conserving properties for N bodies orbiting a point source mass. @leapfrog_integration
+    Comparison of Euler's and Leapfrog integration *energy\ drift over time*
+    for N bodies orbiting a point source mass. @leapfrog_integration
   ],
 )<leapfrog_vs_euler>
+#v(1em)
+
+This optimization/improvement might be the most relevant for two reasons:
+1. If we were to pick a speedup, it could be $infinity$ since the previous version lasted $~100p s$ and the new one lasts indefinitely.
+2. The code change is absurdly small since we only need to change the used a formula as also shown in @leapfrog_vs_euler.
 
 == Space aware datastructure
 
@@ -492,14 +498,19 @@ If the ip has to be changed, after doing so go to _project_root/cuda_simulator _
 
 == Editor setup
 
-The editor does not need setup, as the executable will be provided already.
+The editor does not need setup, as the executable will be provided.
 
 == Running everything
 === General usage
 
-First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running ```bash
-./particle_editor &``` Then, to start the backend, run ```bash
-./particle_simulator```
+First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running
+```bash
+./particle_editor &
+```
+Then, to start the backend, run
+```bash
+./particle_simulator
+```
 
 The editor has two main parts. The Left Panel, where there are mainly controls and information about the simulation / the visualizer. And the Right Panel, which has at the upper part the visualizer of the simulation and below that some controls for moving throught the playback of the simulation.
 
@@ -550,7 +561,8 @@ Finally, note that there are the following keyboard shortcuts:
 
 First and foremost, connect to boada using `-X` as ssh option, else the editor... will look a lot less interesting :)
 
-For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Equal as in the rest of the subject, we just have to ```bash
+For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Equal as in the rest of the subject, we just have to
+```bash
     squeue job.sh
 ```
 
@@ -671,25 +683,45 @@ Finally going into _project_root/cuda_simulator_ and doing `make` will compile t
 )
 
 == Editor
-[O]
-- Explain how this is outside this TGA subject. Since its just a tool for visualizing & feeding data to the simulator. Meaning that it does not involve cuda. For this reason we will not enter in a lot of depth on how it works.
-- Infact a significant part of this was created reusing old personal projects.
-- Since it's not related to TGA, we did not enforced ourselves to do it in c/c++. Instead we did it in rust (specially to reuse the some ui code that used a nice UI rust library e-gui).
-- The main libraries used are: e-gui for ui, wgpu for rendering the particles (we could have used OpenGL), winit (rust library for creating windows without os dependance).
-- Particles are rendered with a since instancing render call. Taking into advantage that we store them contiguosly in memory in a vector.
+
+=== Scope and Purpose
+The Editor serves as the graphical interface for our project, providing tools to visualize the simulation in real-time and interactively feed data (initial conditions, particle types) into the engine. However, the Editor is strictly a visualization and control tool, it does not perform the physics calculations. As such, it falls outside the core scope of this subject, which focuses on the GPU accelerated simulator implementation. Therefore, we will only outline its high-level architecture.
+
+
+== Technology Stack
+Since the editor lays outside the subject we were not bound by C/C++. We chose Rust for its development, primarily to leverage existing personal projects and its modern ecosystem. With ecosystem we primarily mean the following libraries:
+
+- *egui:* Used for the user interface. It provides an immediate mode GUI that is highly responsive, allowing us to reuse UI code from previous personal work.
+
+- *winit:* Library for window creation and event handling, ensuring the application is cross-platform and OS-independent. Even so, we only directly give support for linux, the editor might work in other systems.
+
+- *wgpu:* A modern graphics API wrapper (WebGPU standard) used for rendering. While OpenGL was an option, wgpu offers better integration with Rust and we reused some code from existing personal projects. Even so our rendering code is simple enough: we utilize a single instanced draw call to render all particles at once.
 
 == Editor Library
-[O]
-- Bridge between the editor and simulaton.
-- Implements tcp communication (using the tcp implementation of the rust standard library)
-- Communication can also be done with pipes or files.
-- Basically since both the editor and the simulator need this communication logic, instead of writing the code twice, we placed the rust files in another project and compile it as a library to be used in c/c++ (the simulator) and rust (the editor).
+
+=== The Bridge
+To connect the Rust-based Editor with the C++/CUDA Simulator, we created a dedicated intermediate library. This "Editor Library" acts as the communication bridge, ensuring data flows seamlessly between the visualization layer and the physics engine.
+
+=== Shared Logic
+Since both the Editor and the Simulator require the same communication protocols, implementing the logic twice (once in Rust, once in C++) would be redundant and error-prone. Instead, we centralized this logic:
+
+- *Implementation:* The core networking and serialization logic was written in Rust.
+- *Compilation:* This Rust code is compiled as a library that exposes a C-compatible ABI (Application Binary Interface).
+- *Usage:* This allows the exact same compiled binary to be linked into the C++ Simulator and imported into the Rust Editor, guaranteeing identical behavior on both ends.
+
+=== Communication Channels
+The library is designed to be agnostic about the transport method, supporting multiple ways to exchange data:
+
+- *TCP Sockets:* The primary method uses the Rust standard library's TCP implementation to allow the Editor and Simulator to run as separate processes.
+
+- *Pipes & Files:* The architecture also supports communication via named pipes or files for local data transfer. Initially implemented as a fallback measure in case we encountered problems establishing a TCP connection with the server compute nodes.
+
 
 = Final overview
-- We would have loved to show more cool speedup graphs between versions, but this is not possible to be done fairly when
-  1. The max simulation time is increased from a constant to an infinity (leapfrog integration)
-  2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
-  3. The optimization sacrifices simulation behaviour or accuracy (wall formula & exponent formula).
+We would have loved to show more cool speedup numbers and graphs between code versions, but this is not possible to be done fairly when
+1. The max simulation time is increased from a constant to an infinity (leapfrog integration)
+2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
+3. The optimization sacrifices simulation behaviour or accuracy (wall formula & exponent formula).
 
 
 == Future Optimizations & Alternative Approaches
