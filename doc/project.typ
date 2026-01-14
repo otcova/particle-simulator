@@ -1,6 +1,6 @@
 #set heading(numbering: "1.")
 #show heading: set block(above: 2em, below: 1em)
-#set page(numbering: "1.")
+#set page(numbering: "1")
 #show heading.where(level: 3): set heading(outlined: false, numbering: none)
 
 #let code(body, caption: []) = figure(caption: [#caption #v(1em)], supplement: [Snippet])[
@@ -47,10 +47,10 @@ At every single time step, we calculate the forces acting on every particle usin
 Without a robust integrator, the simulation is just a static snapshot of forces; the integrator is what makes the particles "move."
 
 === Euler vs Leapfrog
-From Instability to RobustnessOur initial implementation relied on Euler integration (a first-order method). While simple to implement, it suffered from severe energy drift.
+Our initial implementation relied on Euler integration (a first-order method). While simple to implement, it suffered from severe energy drift.
 
-- *Previous State (Euler):* The simulation would "explode" (particles gaining infinite energy and flying off) within 100 ns, even when using extremely small time steps of $10^(-16) s$. The error accumulation was too rapid for a stable simulation.
-- *Current State (Leapfrog):* By switching to Leapfrog integration (a second-order symplectic method), we achieved total stability. We have successfully tested simulations for durations of at least $10^(-6) s$ using larger time steps of $10^(-14) s$ without any "explosion" or significant energy drift.
+- *Previous State (Euler):* The simulation would "explode" (particles gaining infinite energy and flying off) within $100p s (= 10^(-10) s)$, even when using extremely small time steps of $1 f s (= 10^(-15) s)$. The error accumulation was too rapid for a stable simulation.
+- *Current State (Leapfrog):* By switching to Leapfrog integration (a second-order symplectic method), we achieved total stability. We have successfully tested simulations for durations of at least $10 n s (= 10^(-8) s)$ using larger time steps of $10 f s (= 10^(-14) s)$ without any "explosion" or significant energy drift. Even so, this does not mean the simulation is perfect, just that the energy drift does not have a trend to increase or decrease indefinitely.
 
 @leapfrog_vs_euler illustrates a classic test case of $N$ bodies orbiting a point source mass.
 The visualization is perfect to understand that the leapfrog integration is not absent of error, but it's likely to oscilate in over and under compensating producin an asimptotically behaviour.
@@ -70,13 +70,13 @@ Our initial implementation was designed for simplicity to establish a baseline. 
 
 
 
-
 #code(
   ```c
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   force = {0, 0};
   for (int j = 0; j < particle_count; ++j)
-    force += mie_force(particles[i].pos, particles[j].pos);
+    if (i != j)
+      force += mie_force(particles[i].pos, particles[j].pos);
   particles[i].apply_force(force);
   ```,
   caption: [Naive force computation $O(N^2)$],
@@ -121,7 +121,9 @@ By organizing particles into buckets, we drastically reduced the search space fo
 #align(center, grid(
   columns: 2,
   gutter: 20pt,
-  align(horizon, $O(N dot (16 dot 9 - 1)) approx O(N)$),
+  align(horizon)[
+    $O(N dot (16 dot 9 - 1)) approx O(N)$
+  ],
   align(left)[
     *$N$:* Total number of particles\
     *$16$:* The maximum capacity of a bucket\
@@ -155,7 +157,7 @@ A spatial data structure introduces a new maintenance cost: as particles move, t
   int i = 0;
 
   // Copy particles inside bucket_i in "buckets_updated[bucket_i]"
-  for (<particles "j" of the adjacent buckets "bucket_j" and itelf>){
+  for (<particles "j" of the adjacent buckets "bucket_j" and itself>){
     Particle p = buckets[bucket_j][j];
     if (<p.pos inside bucket_i>) {
       if (i >= BUCKET_CAPACITY) {
@@ -173,7 +175,7 @@ A spatial data structure introduces a new maintenance cost: as particles move, t
     i += 1;
   }
   ```,
-  caption: [Reallocating particles in their buckets],
+  caption: [Relocating particles in their buckets],
 )<buckets_realloc>
 
 
@@ -249,9 +251,9 @@ To allow for even larger time steps (higher $Delta t$), we experimented with alt
 
 === Reducing the Exponent
 The exponent in the force formula essentially dictates the "stiffness" or "hardness" of the particles.
-- *High Exponent (e.g., 14):* This creates a "hard" shell. The repulsive force spikes drastically over a very short distance. This mimics real solid matter where atoms cannot overlap. However, these massive spikes in acceleration require extremely tiny time steps to resolve accurately, or the simulation explodes.
+- *High Exponent ($approx 14$):* This creates a "hard" shell. The repulsive force spikes drastically over a very short distance. This mimics real solid matter where atoms cannot overlap. However, these massive spikes in acceleration require extremely tiny time steps to resolve accurately, or the simulation explodes.
 
-- *Low Exponent (e.g., 2):* This creates a "soft" shell. The force changes gradually as particles approach each other. Because the maximum acceleration is much lower, the integrator can handle much larger jumps in time ($Delta t$) without instability.
+- *Low Exponent ($approx 2$):* This creates a "soft" shell. The force changes gradually as particles approach each other. Because the maximum acceleration is much lower, the integrator can handle much larger jumps in time ($Delta t$) without instability.
 
 === The Trade-off
 While reducing the exponent allows the simulation to run significantly faster, it fundamentally changes the nature of the matter being simulated.
@@ -285,14 +287,18 @@ Therefore, this optimization is not a "free" like the others. it is a parameter 
 
 == Editor
 [O]
-- Explain how this is outside this TGA subject.
-- Features:
+- Explain how this is outside this TGA subject. Since its just a tool for visualizing & feeding data to the simulator. Meaning that it does not involve cuda. For this reason we will not enter in a lot of depth on how it works.
+- Infact a significant part of this was created reusing old personal projects.
+- Since it's not related to TGA, we did not enforced ourselves to do it in c/c++. Instead we did it in rust (specially to reuse the some ui code that used a nice UI rust library e-gui).
+- The main libraries used are: e-gui for ui, wgpu for rendering the particles (we could have used OpenGL), winit (rust library for creating windows without os dependance).
+- Particles are rendered with a since instancing render call. Taking into advantage that we store them contiguosly in memory in a vector.
 
 == Editor Library
 [O]
-- Explain how this is outside this TGA subject.
-- Bridge between the editor and simulaton
-- Has TCP support, pipe support and file support.
+- Bridge between the editor and simulaton.
+- Implements tcp communication (using the tcp implementation of the rust standard library)
+- Communication can also be done with pipes or files.
+- Basically since both the editor and the simulator need this communication logic, instead of writing the code twice, we placed the rust files in another project and compile it as a library to be used in c/c++ (the simulator) and rust (the editor).
 
 = Final overview
 [U]
@@ -301,7 +307,7 @@ Therefore, this optimization is not a "free" like the others. it is a parameter 
   2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
   3. The optimization sacrifices simulation behaviour or acuracy (wall formula & exponent formula).
 
-== Future Optimizations & Alternative Approache
+== Future Optimizations & Alternative Approaches
 While our current implementation achieves linear complexity and stability, there are other advanced optimization strategies that we considered or identified as potential future improvements.
 
 *1. Exploiting Newton's Third Law (Symmetrical Forces)*
@@ -321,7 +327,7 @@ Our current "Thread-per-Slot/Particle" approach simplifies the logic but suffers
 
 Since we allocate fixed-size buckets (capacity 16) but many buckets may only contain a few particles, threads assigned to empty slots remain idle. In CUDA, if one thread in a warp is active and the others are not, the hardware must still execute the instructions for the empty threads, leading to wasted cycles.
 
-We already tryied to sove this in @warp-utilization, but we did not cover it all. Other solution could be:
+We already tried to sove this in @warp-utilization, but we did not cover it all. Other solution could be:
 - A more complex scheduler that compacts the active particles into a dense list before processing. This would ensure that every warp is fully saturated with work, maximizing the GPU's throughput.
 - A smarter distribution of particles to minimize mixing empty and full slots into the same warp.
 - Other work subdivision rather than one particle per thread.
