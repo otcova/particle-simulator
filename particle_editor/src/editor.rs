@@ -185,7 +185,7 @@ impl Editor {
                 ..Default::default()
             },
 
-            next_send_and_clear: true,
+            next_send_and_clear: false,
 
             // play related
             play_time: 0.,

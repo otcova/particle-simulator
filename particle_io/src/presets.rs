@@ -120,51 +120,13 @@ impl Preset {
 }
 
 pub struct Presets {
-    path: Box<Path>,
     presets: Vec<Preset>,
 }
 
 impl Presets {
     pub fn new() -> Presets {
-        Presets {
-            path: Box::from(Path::new("presets")),
-            presets: vec![Preset {
-                name: "aaa".to_string(),
-                box_size: (50e-9, 50e-9),
-                particles: [
-                    MiePotentialParams {
-                        // Nitrogen
-                        sigma: 3.609e-10,
-                        epsilon: 105.79 * 1.,
-                        n: 14.08,
-                        m: 6.,
-                    },
-                    MiePotentialParams {
-                        // Argon
-                        sigma: 3.404e-10,
-                        epsilon: 117.84 * 1.,
-                        n: 12.085,
-                        m: 6.,
-                    },
-                ],
-                particles_list: vec![],
-            }],
-        }
+        Presets { presets: vec![] }
     }
-
-    pub fn readFromDisk(&self) {
-        /*for entry in fs::read_dir(self.path.clone()).unwrap() {
-            let path = entry.unwrap().path();
-            let mut file = fs::File::open(path);
-            let bytes;
-            file.unwrap().read_to_end(bytes);
-            let inp = from_bytes(bytes);
-
-            //self.presets.push(preset);
-        }*/
-    }
-
-    pub fn save_to_disk(&self) {}
 
     pub fn get_presets_len(&self) -> usize {
         self.presets.len()
