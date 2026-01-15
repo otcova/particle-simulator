@@ -9,9 +9,8 @@ then one can directly build and run with:
 ```bash
 cargo run --release
 ```
-The binary will be in ``.
 
-(First build takes a ~4 minutes)
+(First build takes about ~4 minutes)
 
 ### Cuda Backend
 
