@@ -9,7 +9,6 @@
   #rect(body, stroke: (y: 0.5pt), radius: 5pt, inset: (x: 15pt, y: 10pt))
 ]
 
-
 #import "@preview/lilaq:0.5.0" as lq
 
 #let s = 3.4
@@ -200,7 +199,7 @@ Below are a few captures of performed simulations:
 
 === What is the Integration in our Simulator?
 In the context of a particle simulator, integration is the mathematical engine that drives the simulation forward in time.
-At every single time step, we calculate the forces acting on every particle using the Mie Potential @mie_potential. The integrator takes these forces and update the position ($x$) and velocity ($v$) of each particle for the next fraction of a second (the time step, $Delta t$).
+At every single time step, we calculate the forces acting on every particle using the Mie Potential. The integrator takes these forces and update the position ($x$) and velocity ($v$) of each particle for the next fraction of a second (the time step, $Delta t$).
 Without a robust integrator, the simulation is just a static snapshot of forces; the integrator is what makes the particles "move."
 
 === Euler vs Leapfrog
@@ -216,8 +215,8 @@ The visualization is perfect to understand that the leapfrog integration is not 
 #figure(
   image("leapfrog.png", width: 80%),
   caption: [
-    Comparison of Euler's and Leapfrog integration *energy\ drift over time*
-    for N bodies orbiting a point source mass. @leapfrog_integration
+    Comparison of Euler's and Leapfrog integration *energy drift over time*
+    for N bodies orbiting a point source mass. (image from Wikipedia "Leapfrog integration")
   ],
 )<leapfrog_vs_euler>
 #v(1em)
@@ -448,7 +447,7 @@ This way particles are no longer sucked into the wall before hitting it. They dr
 
 
 == Warp utilization<warp-utilization>
-- The warp utilization (for the buckets version) is not that great, since the particles are usually concentrated in a few buckets, which means that some of the warps will have a lot of work, while others will not have to do anything.
+The warp utilization (for the buckets version) is not that great, since the particles are usually concentrated in a few buckets, which means that some of the warps will have a lot of work, while others will not have to do anything.
 
 In order to try to remedy this, we tried to change it so that the block 0 would take care of the first particle inside each bucket, block 1 the second particle, block 2 the third.... This way, since all blocks would work on all the buckets, instead of some of them doing all the work every one of them would do more or less equal work.
 
@@ -477,40 +476,116 @@ Our experiments showed that there is a critical limit to this optimization.
 
 Therefore, this optimization is not a "free" like the others. it is a parameter choice. If we need to simulate a crystal, we must accept the cost of a higher exponent and smaller $Delta t$. If we only need to simulate a gas or a soft liquid, we can lower the exponent to gain performance.
 
-= How to Run
-== Backend setup<backend_setup>
+= How to Run<how_to_run>
 
-The editor and the backend communicate using tcp. Unfortunately, we've not come with a reliable way to auto update the ip that the backend tries to "speak to" and has to be changed manually. The IP to adjust can be found inside the file `frontend.hpp` (full path: _project_root/cuda_simulator/src/lib/frontend.hpp _), in the function `init_tcp()`. By default it will atempt to connect to the own computer, so if the computer has a nvidia GPU, you can just run the simulator on the same computer without issues.
+== Run the simulator (Simplest Way)
 
-But, if the simulator has to be run in another computer that has a GPU (cough boada cough), it should be as simple as changing the ip inside the `new_tcp_client(&reader, &writer, "0.0.0.0:53123")` by the one that the editor will be running in. If for some reason the editor suddenly stops receiving frames, the ip may have changed (definitively not speaking from experience).
+This is the less prone way of running, using the already compiled binaries that we provided.
+
+You will need 2 terminals:
+1. First run the editor (@run_editor)
+2. Once open, run the simulator (@run_simulator).
+
+#grid(
+  columns: 2,
+  gutter: 40pt,
+  [#code(
+    ```sh
+    cd ParticleSimulator
+    ./particle_editor
+    ```,
+    caption: "Terminal 1",
+  )<run_editor>],
+  [#code(
+    ```sh
+    cd ParticleSimulator/cuda_simulator
+    ./build/cuda_simulator
+    ```,
+    caption: "Terminal 2",
+  )<run_simulator>],
+)
+
+Since we implemented a CPU fallback, this can be tried in any machine without the need of a NVIDIA Gpu.
+Instructions for running the simulator and editor in different machines are in @build_and_run.
+
+=== Quick troubleshooting
+
+If when running the simulator, the following error appears:
+```
+[particle_io_c::TCP] Connection refused (os error 111)
+```
+it means that the simulator wasn't able to connect to the editor. This could happen if:
+- The editor is not running.
+- Editor and simulator are running in different machines which cant be connected through TCP due to networking issues.
+- The IP selected in the "`ParticleSimulator/cuda_simulator/src/lib/frontend.hpp`" file is not the machine where the editor is running. The provided code uses the ip "`0.0.0.0`" which points to itself, making it work only when both editor and simulator are executed in the same machine. See @build_and_run for more instructions.
+
+
+
+
+== Building & Running<build_and_run>
+
+
+In case of wanting to run the simulator in another machine (for example using the `job.sh` file),
+some setup will be needed. Unfortunately, we've not come with a reliable way to magically guess the ip of the machines so the following is necessary:
+1. Before running the editor, check the IP of the machine (@run_editor_machine).
+2. Once the editor is running, write such IP in the *`ParticleSimulator/cuda_simulator/src/lib/frontend.hpp`* file as shown in @ip_change, compile, and execute (@run_simulator_machine).
+
+#grid(
+  columns: 2,
+  gutter: 40pt,
+  [#code(
+    ```sh
+    cd ParticleSimulator
+    ifconfig
+    ./particle_editor
+    ```,
+    caption: "Machine 1",
+  )<run_editor_machine>],
+  [#code(
+    ```sh
+    cd ParticleSimulator/cuda_simulator
+    vim src/lib/frontend.hpp
+    make run
+    ```,
+    caption: "Machine 2",
+  )<run_simulator_machine>],
+)
 
 #code(
   ```c
-  void init_tcp() {
-      // Change this IP ---------------------------------↴
-      is_connected = new_tcp_client(&reader, &writer, "0.0.0.0:53123");
-  }
+  #define EDITOR_IP "0.0.0.0"
   ```,
-  caption: "init_tcp function",
+  caption: "IP to Change",
+)<ip_change>
+
+Take into account that both machines need to established a TCP connection, so firewalls and other network items can ruin it.
+
+We also provide a sbatch script (*`ParticleSimulator/cuda_backend/job.sh`*) for running the simulator. Note that it does not compile, so a "```sh make build```" will be necessary before running the script as shown:
+
+#grid(
+  columns: 2,
+  gutter: 40pt,
+  [#code(
+    ```sh
+    cd ParticleSimulator
+    ifconfig
+    ./particle_editor
+    ```,
+    caption: [Interactive Node `(ssh -X)`],
+  )],
+  [#code(
+    ```sh
+    cd ParticleSimulator/cuda_simulator
+    vim src/lib/frontend.hpp
+    make build
+    sbatch job.sh
+    ```,
+    caption: "GPU Compute Node",
+  )],
 )
 
-If the ip has to be changed, after doing so go to _project_root/cuda_simulator _ and execute make.
-
-== Editor setup
-
-The editor does not need setup, as the executable will be provided.
-
-== Running everything
-=== General usage
-
-First, you must have the editor running before the simulator. This is as simple as going into _project_root/build/ _ and running
-```bash
-./particle_editor &
-```
-Then, to start the backend, run
-```bash
-./particle_simulator
-```
+== Playing with the editor
+Explaining how to play is a bit difficult and time consuming, we managed to join this blob of characters in case it helps.
 
 The editor has two main parts. The Left Panel, where there are mainly controls and information about the simulation / the visualizer. And the Right Panel, which has at the upper part the visualizer of the simulation and below that some controls for moving throught the playback of the simulation.
 
@@ -557,125 +632,91 @@ Finally, note that there are the following keyboard shortcuts:
 - D: Disconnects from the backend.
 
 
-=== Boada specific (non interactive GPU)
-
-First and foremost, connect to boada using `-X` as ssh option, else the editor... will look a lot less interesting :)
-
-For the particle editor, exactly the same. For the simulator, instead of directly running it, we have to use `squeue`. For this, we can use the script `job.sh`. Equal as in the rest of the subject, we just have to
-```bash
-    squeue job.sh
-```
-
-For the rest, same as in general usage.
-
 
 = About the Source Code
+#let project_root = "ParticleSimulator"
 
 As mentioned before, the project has two big blocks, that being the editor and the simulator. There is also a more secondary block (but necessary), which is the library that allows both of them to communicate.
 
-The whole source code can be found and downloaded at #link("https://github.com/otcova/particle-simulator"). In order to compile it, a newish version of #link("https://doc.rust-lang.org/cargo/getting-started/installation.html")[cargo] (rust main package manager) will be needed.
+For simplicity, the provided zip *does not contain* the source code of the editor app and library, only the already compiled binaries.
+The complete source code is published in https://github.com/otcova/particle-simulator.
+In case of wanting to use the github repository brief instruction on how to build it are in the github `README.md`.
 
-The editor can be compiled by going into _project_root/particle_editor/ _ and running ```bash
-    cargo build --release
-```
-(note: the first time will take up a while, because it has to basically install and compile 400\~ish rust libraries).
+Instruction to bound and run the simulator and use the editor are in @how_to_run.
 
-In a similar fashion, going into _project_root/particle_io_ and running the same command will compile the library necessary to communicate the editor and the simulator.
+#block(sticky: true)[
+  == Simulator
+  The provided source code has the following structure.
 
-Finally going into _project_root/cuda_simulator_ and doing `make` will compile the simulator (refer to @backend_setup)
+  *`ParticleSimulator/`*\
+  `└── `*`/cuda_simulator/: `* Root folder of the simulator.\
+  `   ├── `*`/Makefile: `* Makefile that compiles the source code of the simulator using nvcc.\
+  `   └── `*`/src/: `* Folder with the source code of the simulator.\
+  `       ├── `*`/cuda_simulator.cu: `* Contains the main loop of the simulator.\
+  `       ├── `*`/kernel.cuh: `* Code that handles the cuda malloc/memcpy/free as well as building the\
+  `       │                `  bucket griddata-structure from the particles that the kernel needs. It\
+  `       │                ` also has some simulation "```c #define```" parameters not configurable\
+  `       │                ` through the editor.\
+  `       ├── `*`/kernel_bucket.cuh: `* Has the kernels (and the invocation) for the bucket version.\
+  `       ├── `*`/kernel_compact.cuh: `* Has the kernels (and the invocation) for the compact/naive\
+  `       │                        `      $O(n^2)$ version.\
+  `       ├── `*`/particle.cuh: `* Functions to calculate things related with the particles (forces,\
+  `       │                  `  velocities, positions).\
+  `       └── `*`/lib/: `* Folder which contains helper code\
+  `          ├── `*`/frontend.hpp: `* Used as an interface between the simulator and\
+  `          │                  ` the library that communicates the simulator and the editor.\
+  `          ├── `*`/thread_pool.hpp: `* Custom thread_pool implementation to give the CPU\
+  `          │                     ` a more equal fighting ground against the GPU.\
+  `          └── `*`/log.hpp: `* Used for debugging purposes.\
+]
 
-== Simulation
-- The source of the simulator is in _project_root/cuda_simulator_, which has the following structure.
-  - `cuda_simulator`: Root folder of the simulator.
-    - `Makefile`: Makefile that compiles the source code of the simulator using nvcc. It can compile into "release" mode and "debug" mode.
+=== CPU execution
 
-  - `build`: Folder where the compiled code will go.
-
-    - `src`: Folder where the source code of the simulator is.
-      - `cuda_simulator.cu`: Contains the main loop of the simulator.
-
-      - `kernel.cuh`: Has some ```c #define``` that the rest of the code uses, as well as functions to abstract the code of the cuda version versus the CPU version.
-
-    - `kernel_bucket.cuh`: Has the kernels and the calls to them for the bucket version.
-
-    - `kernel_compact.cuh`: Has the kernels and the calls to them for the compact/naive version.
-
-    - `particle.cuh`: Functions to calculate things related with the particles (forces, velocities, positions).
-
-    - `lib`: Folder which contains helper code:
-      - `frontend.hpp`: used as an interface between the simulator and the library that communicates the simulator and the editor.
-
-      - `thread_pool.hpp`: custom thread_pool implementation to give the CPU a more equal figthing ground against the GPU.
-
-      - `log.hpp`: used for debugging purposes.
-
-- Below are the three kernels where calculations happen. As mentioned before, the compact kernel is a lot simpler than the other two. The two `step kernels` are missing the code for adding the walls force, the cursor interaction and the code to apply the force to the position and velocity of the particle at the end of the kernel. In addition, the two `bucket kernels` are missing the code that checks which buckets they should work with (so the buckets next to walls don't try to acces things that they shouldn't).
-
+To be able to run it without a NVIDIA Gpu we managed to make the kernels also run in the CPU.
+This is achieved by writing all the kernel logic in a "`__host__ __device__`" function, and call such function from either
+the `__global__` kernel or a normal function as shown at the @cuda_love_cpu:
 #code(
+  caption: [Using the kernel logic from both the GPU and CPU],
+)[
   ```c
-      ...
-      for (uint32_t j = 0; j < particle_count; ++j) {
-          if (j == i) continue;
+  // Naive O(N^2) implementation that uses a compact particle array.
+  __host__ __device__ void compact_step_kernel(..., uint32_t i) {
+    ...
+    float2 force = {0., 0.}
 
-          float2 r = f_dist(src[i], src[j], frame);
-          force += params.f2_force(r);
-      }
-      ...
-  ```,
-  caption: [compact step kernel],
-)
+    for (uint32_t j = 0; j < particle_count; ++j) {
+      if (j == i) continue;
+      force += ...;  // Force computation
+    }
 
-#code(
-  ```c
-      ...
-      for (int32_t y = y_min; y <= y_max; ++y) {
-          for (int32_t x = x_min; x <= x_max; ++x) {
-              uint32_t bucket_j = ((x + bucket_x) + (y + bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
+    ... // Force integration
+  }
 
-              for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
-                  uint32_t j = jj + bucket_j;
-                  if (j == i || src[j].ty < 0) continue;
+  __global__ void compact_step_gpu(...) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= particle_count) return;
+    compact_step_kernel(..., i);
+  }
 
-                  float2 r = f_dist(src[i], src[j], frame);
-                  force += params.f2_force(r);
-              }
-          }
-      }
-      ...
-  ```,
-  caption: [bucket step kernel],
-)
+  void compact_step_cpu(...) {
+    // (In the provided code we use a thread pool here)
+    for (uint32_t i = 0; i < particle_count; ++i) {
+      compact_step_kernel(..., i)
+    }
+  }
+  ```
+]<cuda_love_cpu>
 
-#code(
-  ```c
-      ...
-      for (int32_t y = y_min; y <= y_max; ++y) {
-          for (int32_t x = x_min; x <= x_max; ++x) {
-              uint32_t bucket_j = ((x + bucket_x) + (y + bucket_y) * BUCKETS_Y) * BUCKET_CAPACITY;
+=== Stream usage
 
-              for (uint32_t jj = 0; jj < BUCKET_CAPACITY; ++jj) {
-                  uint32_t j = jj + bucket_j;
-                  if (src[j].ty < 0) continue;
+The big advantage of our simulation is that the kernel can execute indefinitely without the need of receiving data from the host. Meaning that our kernel time is the total simulation time.
 
-                  if (src[j].x >> (32 - BUCKETS_X_LOG2) != bucket_x ||
-                      src[j].y >> (32 - BUCKETS_Y_LOG2) != bucket_y) continue;
+However, since we want to be able to see the simulation in the editor, we need to send frames from the simulator to the editor every certain amount of iterations. For this reason we have two streams, one for calculating the next frames, and another one for transferring the previous frame to the host.
 
+The idea is that after N simulation steps, the kernel writes the last frame into another GPU buffer.  Then, while the next simulation steps are being calculated in the first stream, the second stream transfers the previous frame to the host. Once the transfer is done, the host can send the frame to the editor while the GPU is calculating the next frame. We are basically swapping buffers between the two streams.
 
-                  dst[bucket_i*BUCKET_CAPACITY + i++] = src[j];
-                  if (i == BUCKET_CAPACITY) return;
-              }
-          }
-      }
-      ...
-  ```,
-  caption: [bucket move kernel],
-)
-
-- To be able to see the improvement in usign a gpu over a cpu (and to help identify whether an issue is caused by the code or hardware undefined behaviour) we wanted to make it so we had a kernel for the cpu and another one for the gpu.
-
-  Instead of duplicating the code, cuda has a nice feature that allows us to choose for what type of device a kernel should be compiled. In class we've been using `__global__` to "indicate" to the compiler that that function is a kernel for the gpu, but there are more `__XX..X__` keys that can be used. In our case, each kernel has in the declaration `__host__` (compile it for the CPU) and `__device__` (compile it for the device/GPU). When the compiler sees both of this it compiles the function for both devices.
-
-- In order to improve performance, we use two streams to separate the calculations from the memory transfers. This in theory allows us to start calculating the next frame while we transfer the previous one to the host and then send it to the editor. On the GPU that Uriel has (RTX3050) this does not appear to work, as can be seen on the trace below.
+Sadly, on the GPU that Uriel has (RTX3050) this does not appear to work, as can be seen on the trace below.
+We have a bunch of ideas why this could have happened but we ran out of time to investigate it further. We have not given this priority since this transfer is not significative given that we only need around 30 fps. A normal execution on such device, the transfer only takes around 3% of the total time.
 
 #figure(
   image("Trace.png"),
@@ -688,7 +729,7 @@ Finally going into _project_root/cuda_simulator_ and doing `make` will compile t
 The Editor serves as the graphical interface for our project, providing tools to visualize the simulation in real-time and interactively feed data (initial conditions, particle types) into the engine. However, the Editor is strictly a visualization and control tool, it does not perform the physics calculations. As such, it falls outside the core scope of this subject, which focuses on the GPU accelerated simulator implementation. Therefore, we will only outline its high-level architecture.
 
 
-== Technology Stack
+=== Technology Stack
 Since the editor lays outside the subject we were not bound by C/C++. We chose Rust for its development, primarily to leverage existing personal projects and its modern ecosystem. With ecosystem we primarily mean the following libraries:
 
 - *egui:* Used for the user interface. It provides an immediate mode GUI that is highly responsive, allowing us to reuse UI code from previous personal work.
@@ -718,7 +759,7 @@ The library is designed to be agnostic about the transport method, supporting mu
 
 
 = Final overview
-We would have loved to show more cool speedup numbers and graphs between code versions, but this is not possible to be done fairly when
+We would have loved to show more cool speedup numbers and graphs between code versions, but this is not possible to be done fairly when:
 1. The max simulation time is increased from a constant to an infinity (leapfrog integration)
 2. The optimization brings a change from cuadratic to practically linear (buckets implementation)
 3. The optimization sacrifices simulation behaviour or accuracy (wall formula & exponent formula).
@@ -756,7 +797,3 @@ We could implement more sparse datastructures (like a Quadtree). This could even
 
 However, while trees are more flexible, they are not necessarily faster for this specific type of physics.
 Unlike a rigid body simulation that only checks for collisions (intersection), our simulation calculates forces based on a potential field. We need to find all particles within a radius, not just the single closest one. Traversing a tree to find all neighbors in a radius is computationally heavier than iterating over a known fixed grid of buckets.
-
-
-
-#bibliography("bibliography.yml")
