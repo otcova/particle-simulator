@@ -185,7 +185,7 @@ impl Editor {
                 ..Default::default()
             },
 
-            next_send_and_clear: true,
+            next_send_and_clear: false,
 
             // play related
             play_time: 0.,
@@ -1265,33 +1265,6 @@ impl Editor {
 
                 ui.label("Num Particles");
                 ui.label(editor.num(particle_count, ""));
-                ui.end_row();
-
-                ui.end_row();
-
-                ui.label("Temperature");
-                ui.vertical(|ui| {
-                    ui.label(editor.num(100., "K"));
-                    ui.label(editor.num(100. - 273.15, "ºC"));
-                });
-                ui.end_row();
-
-                ui.label("2D Pressure");
-                ui.label(editor.num(12345., "N/m"));
-                ui.end_row();
-
-                ui.end_row();
-
-                ui.label("Kinetic energy");
-                ui.label(editor.num(0.0000412412, "J"));
-                ui.end_row();
-
-                ui.label("Potential energy");
-                ui.label(editor.num(0.000012122, "J"));
-                ui.end_row();
-
-                ui.label("Total energy");
-                ui.label(editor.num(0.000051234124, "J"));
                 ui.end_row();
 
                 ui.end_row();
