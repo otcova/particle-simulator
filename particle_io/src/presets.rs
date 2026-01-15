@@ -1,7 +1,7 @@
 use crate::*;
 use core::{f32, f64};
 use rand::{Rng, distr::uniform::SampleRange, rngs::ThreadRng};
-use std::{ops::RangeInclusive, path::Path};
+use std::ops::RangeInclusive;
 
 pub struct ParticleLattice {
     pub particle_count: (u32, u32),
